@@ -10,6 +10,7 @@ frontend/.flutter-plugins
 frontend/.flutter-plugins-dependencies
 frontend/windows/flutter/ephemeral/
 frontend/android/.kotlin/
+frontend/android/app/src/main/jniLibs/
 
 # Release artifacts
 dist/

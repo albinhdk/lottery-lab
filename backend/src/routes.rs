@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
-    analysis, backtest, config, db::Db, models::Draw, sources,
+    analysis, backtest, config, db::Db, models::Draw, prize, sources,
     strategies::{StrategyKind, StrategyRunner},
 };
 
@@ -69,6 +69,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/stats/randomness", get(randomness))
         .route("/api/strategies", get(strategy_list))
         .route("/api/tickets", post(tickets))
+        .route("/api/prize-check", post(prize_check))
         .route("/api/backtest", post(run_backtest))
         .route("/api/sync", post(sync))
         .route("/api/import", post(import))
@@ -315,6 +316,81 @@ async fn tickets(
         "tickets": list,
         "disclaimer": "号码由所选规则随机生成。任何选号方法都不会改变中奖概率；请理性购彩，量力而行。",
     })))
+}
+
+#[derive(Deserialize)]
+struct PrizeCheckRequest {
+    game: String,
+    #[serde(default)]
+    issue: Option<String>,
+    primary: Vec<u8>,
+    secondary: Vec<u8>,
+}
+
+/// Checks one hand-picked ticket against a draw. When `issue` is omitted the
+/// latest draw is used.
+async fn prize_check(
+    State(state): State<AppState>,
+    Json(req): Json<PrizeCheckRequest>,
+) -> Result<Json<Value>, AppError> {
+    let g = game_or_err(&req.game)?;
+    validate_pick(
+        &req.primary,
+        g.primary_count,
+        g.primary_max,
+        g.primary_label,
+    )?;
+    validate_pick(
+        &req.secondary,
+        g.secondary_count,
+        g.secondary_max,
+        g.secondary_label,
+    )?;
+
+    let issue = req
+        .issue
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let draw = match issue {
+        Some(issue) => state.db.get(&req.game, issue)?.ok_or_else(|| AppError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("未找到 {} 期号 {issue}", g.name),
+        })?,
+        None => state
+            .db
+            .latest(&req.game)?
+            .ok_or_else(|| AppError::bad("该彩种暂无开奖数据，请先同步"))?,
+    };
+
+    let mut primary = req.primary;
+    primary.sort_unstable();
+    let mut secondary = req.secondary;
+    secondary.sort_unstable();
+    Ok(Json(serde_json::to_value(prize::evaluate(
+        &draw,
+        g,
+        &primary,
+        &secondary,
+    ))?))
+}
+
+fn validate_pick(nums: &[u8], count: usize, max: u8, label: &str) -> Result<(), AppError> {
+    if nums.len() != count {
+        return Err(AppError::bad(format!(
+            "{label}需要选择 {count} 个号码（当前 {} 个）",
+            nums.len()
+        )));
+    }
+    if let Some(bad) = nums.iter().find(|&&n| n < 1 || n > max) {
+        return Err(AppError::bad(format!(
+            "{label}号码 {bad} 超出 1–{max} 范围"
+        )));
+    }
+    if !is_unique(nums) {
+        return Err(AppError::bad(format!("{label}号码不能重复")));
+    }
+    Ok(())
 }
 
 async fn run_backtest(

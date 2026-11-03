@@ -1,11 +1,11 @@
 {
-    "name": "lottery_lab_app",
-    "short_name": "lottery_lab_app",
+    "name": "彩票实验室 · Lottery Lab",
+    "short_name": "彩票实验室",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0A0E15",
+    "theme_color": "#0A0E15",
+    "description": "彩票统计分析与回测工具：频率、遗漏、随机性检验与严格走查回测。",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

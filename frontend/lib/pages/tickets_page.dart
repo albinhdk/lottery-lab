@@ -6,6 +6,7 @@ import '../format.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import 'prize_check_panel.dart';
 
 class TicketsPage extends StatefulWidget {
   final AppState state;
@@ -24,6 +25,10 @@ class _TicketsPageState extends State<TicketsPage> {
   bool _generating = false;
   String? _error;
   Map<String, dynamic>? _result;
+
+  /// 0 = strategy generator, 1 = hand-picked prize checker.
+  int _mode = 0;
+  bool _checkerOpened = false;
 
   GameInfo? get game => widget.state.game;
 
@@ -85,10 +90,54 @@ class _TicketsPageState extends State<TicketsPage> {
     if (g == null) return const SizedBox();
     return LayoutBuilder(
       builder: (context, constraints) {
+        final pad = constraints.maxWidth < 720 ? 12.0 : 26.0;
+        return Column(
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(pad, 16, pad, 2),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: ChoicePills<int>(
+                  values: const [0, 1],
+                  selected: _mode,
+                  label: (v) => v == 0 ? '智能选号' : '手选验奖',
+                  onChanged: _switchMode,
+                ),
+              ),
+            ),
+            Expanded(
+              child: IndexedStack(
+                sizing: StackFit.expand,
+                index: _mode,
+                children: [
+                  _generator(g),
+                  _checkerOpened
+                      ? PrizeCheckPanel(game: g, api: widget.state.api)
+                      : const SizedBox.shrink(),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _switchMode(int value) {
+    if (value == _mode) return;
+    setState(() {
+      _mode = value;
+      if (value == 1) _checkerOpened = true;
+    });
+  }
+
+  Widget _generator(GameInfo g) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
         final wide = constraints.maxWidth > 1100;
         final pad = constraints.maxWidth < 720 ? 12.0 : 26.0;
         return SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(pad, 22, pad, 30),
+          padding: EdgeInsets.fromLTRB(pad, 16, pad, 30),
           child: wide
               ? Row(
                   crossAxisAlignment: CrossAxisAlignment.start,

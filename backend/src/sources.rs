@@ -12,10 +12,25 @@ use crate::models::Draw;
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                   (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
+const PAGE_SIZE: usize = 100;
+
+/// The periodic freshness check only reads the newest page. 30 issues cover
+/// roughly ten weeks of either game.
+const RECENT_PAGE_SIZE: usize = 30;
+
 fn client() -> Result<Client> {
+    // Use Mozilla's bundled roots instead of the platform verifier. The
+    // platform verifier needs JNI/Android Context initialization, while the
+    // same binary also runs embedded inside the Android app process.
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let tls = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
     Client::builder()
         .user_agent(UA)
         .timeout(Duration::from_secs(25))
+        .tls_backend_preconfigured(tls)
         .build()
         .context("build http client")
 }
@@ -40,42 +55,70 @@ fn parse_money(s: &str) -> Option<i64> {
     clean.parse::<f64>().ok().map(|v| v.round() as i64)
 }
 
-/// Fetch every page of the official 双色球 API (data starts in 2013).
-pub async fn fetch_ssq_official() -> Result<Vec<Draw>> {
-    let client = client()?;
-    let mut all = Vec::new();
-    let mut page = 1usize;
-    let mut pages;
-    loop {
-        let url = format!(
-            "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice\
-             ?name=ssq&issueCount=&issueStart=&issueEnd=&dayStart=&dayEnd=\
-             &pageNo={page}&pageSize=100&week=&systemType=PC"
-        );
-        let resp = client
-            .get(&url)
-            .header("Referer", "https://www.cwl.gov.cn/")
-            .send()
-            .await
-            .context("request cwl ssq")?;
-        let status = resp.status();
-        let text = resp.text().await.context("read cwl ssq body")?;
-        if !status.is_success() {
-            anyhow::bail!("cwl ssq returned {status}: {}", &text[..text.len().min(200)]);
+fn snippet(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
+}
+
+/// GET with up to three attempts. The official endpoints occasionally time
+/// out or answer 5xx; without a retry a single flaky page used to abort the
+/// whole sync.
+async fn fetch_text(
+    client: &Client,
+    url: &str,
+    headers: &[(&str, &str)],
+    what: &str,
+) -> Result<String> {
+    let mut last_error = String::from("未知错误");
+    for attempt in 1..=3u32 {
+        let mut request = client.get(url);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
         }
-        let v: Value = serde_json::from_str(&text).context("parse cwl ssq json")?;
-        if v["state"].as_i64().unwrap_or(-1) != 0 {
-            anyhow::bail!("cwl ssq error: {}", v["message"]);
+        match request.send().await {
+            Ok(response) => {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                if status.is_success() {
+                    return Ok(text);
+                }
+                last_error = format!("{status}: {}", snippet(&text, 200));
+            }
+            Err(err) => last_error = format!("{err:#}"),
         }
-        let total = v["total"].as_u64().unwrap_or(0) as usize;
-        pages = total.div_ceil(100).max(1);
-        let arr = match v["result"].as_array() {
-            Some(a) => a.clone(),
-            None => break,
-        };
-        if arr.is_empty() {
-            break;
+        if attempt < 3 {
+            sleep(Duration::from_millis(700 * u64::from(attempt))).await;
         }
+    }
+    anyhow::bail!("{what} 请求失败（已重试 3 次）: {last_error}")
+}
+
+/// One page of the official 双色球 API. Returns the parsed draws and the
+/// total number of pages.
+async fn fetch_ssq_page(
+    client: &Client,
+    page: usize,
+    page_size: usize,
+) -> Result<(Vec<Draw>, usize)> {
+    let url = format!(
+        "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice\
+         ?name=ssq&issueCount=&issueStart=&issueEnd=&dayStart=&dayEnd=\
+         &pageNo={page}&pageSize={page_size}&week=&systemType=PC"
+    );
+    let text = fetch_text(
+        client,
+        &url,
+        &[("Referer", "https://www.cwl.gov.cn/")],
+        "cwl ssq",
+    )
+    .await?;
+    let v: Value = serde_json::from_str(&text).context("parse cwl ssq json")?;
+    if v["state"].as_i64().unwrap_or(-1) != 0 {
+        anyhow::bail!("cwl ssq error: {}", v["message"]);
+    }
+    let total = v["total"].as_u64().unwrap_or(0) as usize;
+    let pages = total.div_ceil(page_size).max(1);
+    let mut draws = Vec::new();
+    if let Some(arr) = v["result"].as_array() {
         for item in arr {
             let issue = item["code"].as_str().unwrap_or("").to_string();
             let red = parse_nums(item["red"].as_str().unwrap_or(""));
@@ -83,7 +126,7 @@ pub async fn fetch_ssq_official() -> Result<Vec<Draw>> {
             if issue.is_empty() || red.len() != 6 || blue.len() != 1 {
                 continue;
             }
-            all.push(Draw {
+            draws.push(Draw {
                 game: "ssq".into(),
                 issue,
                 date: short_date(item["date"].as_str().unwrap_or("")),
@@ -93,6 +136,21 @@ pub async fn fetch_ssq_official() -> Result<Vec<Draw>> {
                 pool: item["poolmoney"].as_str().and_then(|s| s.parse().ok()),
             });
         }
+    }
+    Ok((draws, pages))
+}
+
+/// Fetch every page of the official 双色球 API (data starts in 2013).
+pub async fn fetch_ssq_official() -> Result<Vec<Draw>> {
+    let client = client()?;
+    let mut all = Vec::new();
+    let mut page = 1usize;
+    loop {
+        let (mut draws, pages) = fetch_ssq_page(&client, page, PAGE_SIZE).await?;
+        if draws.is_empty() {
+            break;
+        }
+        all.append(&mut draws);
         if page >= pages {
             break;
         }
@@ -104,51 +162,41 @@ pub async fn fetch_ssq_official() -> Result<Vec<Draw>> {
     Ok(all)
 }
 
-/// Fetch every page of the official 超级大乐透 API (data starts in 2007).
-pub async fn fetch_dlt_official() -> Result<Vec<Draw>> {
-    let client = client()?;
-    let mut all = Vec::new();
-    let mut page = 1usize;
-    let mut pages;
-    loop {
-        let url = format!(
-            "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry\
-             ?gameNo=85&provinceId=0&pageSize=100&isVerify=1&pageNo={page}"
-        );
-        let resp = client
-            .get(&url)
-            .header("Referer", "https://www.sporttery.cn/")
-            .header("Origin", "https://www.sporttery.cn")
-            .send()
-            .await
-            .context("request sporttery dlt")?;
-        let status = resp.status();
-        let text = resp.text().await.context("read sporttery body")?;
-        if !status.is_success() {
-            anyhow::bail!(
-                "sporttery dlt returned {status}: {}",
-                &text[..text.len().min(200)]
-            );
-        }
-        let v: Value = serde_json::from_str(&text).context("parse sporttery json")?;
-        if !v["success"].as_bool().unwrap_or(false) {
-            anyhow::bail!("sporttery dlt error: {}", v["errorMessage"]);
-        }
-        pages = v["value"]["pages"].as_u64().unwrap_or(1) as usize;
-        let arr = match v["value"]["list"].as_array() {
-            Some(a) => a.clone(),
-            None => break,
-        };
-        if arr.is_empty() {
-            break;
-        }
+/// One page of the official 超级大乐透 API. Returns the parsed draws and the
+/// total number of pages.
+async fn fetch_dlt_page(
+    client: &Client,
+    page: usize,
+    page_size: usize,
+) -> Result<(Vec<Draw>, usize)> {
+    let url = format!(
+        "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry\
+         ?gameNo=85&provinceId=0&pageSize={page_size}&isVerify=1&pageNo={page}"
+    );
+    let text = fetch_text(
+        client,
+        &url,
+        &[
+            ("Referer", "https://www.sporttery.cn/"),
+            ("Origin", "https://www.sporttery.cn"),
+        ],
+        "sporttery dlt",
+    )
+    .await?;
+    let v: Value = serde_json::from_str(&text).context("parse sporttery json")?;
+    if !v["success"].as_bool().unwrap_or(false) {
+        anyhow::bail!("sporttery dlt error: {}", v["errorMessage"]);
+    }
+    let pages = v["value"]["pages"].as_u64().unwrap_or(1) as usize;
+    let mut draws = Vec::new();
+    if let Some(arr) = v["value"]["list"].as_array() {
         for item in arr {
             let issue = item["lotteryDrawNum"].as_str().unwrap_or("").to_string();
             let nums = parse_nums(item["lotteryDrawResult"].as_str().unwrap_or(""));
             if issue.is_empty() || nums.len() != 7 {
                 continue;
             }
-            all.push(Draw {
+            draws.push(Draw {
                 game: "dlt".into(),
                 issue,
                 date: short_date(item["lotteryDrawTime"].as_str().unwrap_or("")),
@@ -158,6 +206,21 @@ pub async fn fetch_dlt_official() -> Result<Vec<Draw>> {
                 pool: item["poolBalanceAfterdraw"].as_str().and_then(parse_money),
             });
         }
+    }
+    Ok((draws, pages))
+}
+
+/// Fetch every page of the official 超级大乐透 API (data starts in 2007).
+pub async fn fetch_dlt_official() -> Result<Vec<Draw>> {
+    let client = client()?;
+    let mut all = Vec::new();
+    let mut page = 1usize;
+    loop {
+        let (mut draws, pages) = fetch_dlt_page(&client, page, PAGE_SIZE).await?;
+        if draws.is_empty() {
+            break;
+        }
+        all.append(&mut draws);
         if page >= pages {
             break;
         }
@@ -167,6 +230,18 @@ pub async fn fetch_dlt_official() -> Result<Vec<Draw>> {
     all.sort_by(|a, b| a.date.cmp(&b.date));
     all.dedup_by(|a, b| a.issue == b.issue);
     Ok(all)
+}
+
+/// Fetch only the newest page of a game's official feed. This is what the
+/// periodic background sync uses, so a freshness check costs one request per
+/// game instead of walking the whole history.
+pub async fn fetch_recent(game_id: &str) -> Result<Vec<Draw>> {
+    let client = client()?;
+    match game_id {
+        "ssq" => Ok(fetch_ssq_page(&client, 1, RECENT_PAGE_SIZE).await?.0),
+        "dlt" => Ok(fetch_dlt_page(&client, 1, RECENT_PAGE_SIZE).await?.0),
+        other => anyhow::bail!("unknown game {other}"),
+    }
 }
 
 /// 500.com history table for 双色球 seasons 2003–2012 (the official API only

@@ -1,13 +1,3 @@
-mod analysis;
-mod backtest;
-mod config;
-mod db;
-mod models;
-mod routes;
-mod sources;
-mod stats;
-mod strategies;
-
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -15,11 +5,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::Router;
 use tower_http::{
-    cors::CorsLayer,
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use lottery_lab_backend::{build_router, db, spawn_auto_sync};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -35,10 +26,7 @@ async fn main() -> Result<()> {
     let db = Arc::new(db::Db::open(&db_path)?);
     tracing::info!("database: {db_path}");
 
-    let state = routes::AppState { db: db.clone() };
-    let app = routes::router(state)
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http());
+    let app: Router = build_router(db.clone()).layer(TraceLayer::new_for_http());
 
     let web_dir =
         std::env::var("LOTTERY_WEB_DIR").unwrap_or_else(|_| "../frontend/build/web".into());
@@ -63,25 +51,6 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
-}
-
-fn spawn_auto_sync(db: Arc<db::Db>) {
-    tokio::spawn(async move {
-        for g in config::GAMES {
-            let existing = db.count(g.id).unwrap_or(0);
-            if existing > 0 {
-                continue;
-            }
-            tracing::info!("首次启动，自动同步 {} 历史数据…", g.name);
-            match sources::sync(g.id, true, &g).await {
-                Ok(draws) => match db.upsert_many(&draws, "official") {
-                    Ok(written) => tracing::info!("{} 同步完成：{} 条写入", g.name, written),
-                    Err(e) => tracing::warn!("{} 写入失败: {e:#}", g.name),
-                },
-                Err(e) => tracing::warn!("{} 同步失败（可稍后手动同步）: {e:#}", g.name),
-            }
-        }
-    });
 }
 
 async fn shutdown_signal() {

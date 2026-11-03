@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -13,6 +15,7 @@ import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/server_settings.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const LotteryLabApp());
 }
 
@@ -23,18 +26,45 @@ class LotteryLabApp extends StatefulWidget {
   State<LotteryLabApp> createState() => _LotteryLabAppState();
 }
 
-class _LotteryLabAppState extends State<LotteryLabApp> {
+class _LotteryLabAppState extends State<LotteryLabApp>
+    with WidgetsBindingObserver {
   late final AppState _state;
+  Timer? _refreshTimer;
+
+  /// How often the UI asks the backend for the latest issue numbers. The
+  /// backend itself polls the official feeds in the background; this timer
+  /// only makes the new draws appear without a manual sync.
+  static const _refreshEvery = Duration(minutes: 2);
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _state = AppState();
     _state.init();
+    _refreshTimer = Timer.periodic(_refreshEvery, (_) {
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      final active = lifecycle == null ||
+          (lifecycle != AppLifecycleState.paused &&
+              lifecycle != AppLifecycleState.detached &&
+              lifecycle != AppLifecycleState.hidden);
+      if (active) {
+        _state.refreshGames(silent: true);
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _state.refreshGames(silent: true);
+    }
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _state.dispose();
     super.dispose();
   }
@@ -70,13 +100,19 @@ class _Shell extends StatelessWidget {
     ('历史开奖', '完整开奖记录，按期号检索与分页浏览'),
     ('统计分析', '频率、遗漏、组合结构与严格的随机性检验'),
     ('策略回测', '严格走查：每一期只用此前数据，与随机基线对比'),
-    ('智能选号', '按策略生成号码；它不会提高中奖概率'),
+    ('选号与验奖', '按策略生成号码，或手选号码核对奖金；都不会提高中奖概率'),
   ];
 
   @override
   Widget build(BuildContext context) {
     if (state.loading && state.games.isEmpty) {
-      return const Scaffold(body: _Splash());
+      return Scaffold(
+        body: _Splash(
+          message: state.usesEmbedded
+              ? '正在启动内置数据引擎…'
+              : '正在连接后端服务…',
+        ),
+      );
     }
     if (state.games.isEmpty) {
       return Scaffold(
@@ -89,14 +125,17 @@ class _Shell extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   ErrorBox(
-                    message: state.error ?? '无法连接后端服务。\n请确认电脑上的后端已启动，并填写正确的服务器地址。',
+                    message: state.error ??
+                        (state.embeddedSupported
+                            ? '内置数据引擎未能启动。\n可以重试，或在下方切换到电脑上的后端。'
+                            : '无法连接后端服务。\n请确认电脑上的后端已启动，并填写正确的服务器地址。'),
                     onRetry: state.refreshGames,
                   ),
                   const SizedBox(height: 14),
                   OutlinedButton.icon(
                     onPressed: () => showServerSettings(context, state),
                     icon: const Icon(Icons.settings_ethernet, size: 17),
-                    label: Text('设置服务器地址（当前：${state.apiBase}）'),
+                    label: Text('设置数据服务（当前：${state.apiBaseLabel}）'),
                   ),
                 ],
               ),
@@ -159,7 +198,9 @@ class _Shell extends StatelessWidget {
 }
 
 class _Splash extends StatelessWidget {
-  const _Splash();
+  final String message;
+
+  const _Splash({required this.message});
 
   @override
   Widget build(BuildContext context) {
@@ -184,9 +225,9 @@ class _Splash extends StatelessWidget {
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, letterSpacing: 1),
           ),
           const SizedBox(height: 8),
-          const Text(
-            '正在连接后端服务…',
-            style: TextStyle(fontSize: 12.5, color: AppColors.muted),
+          Text(
+            message,
+            style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
           ),
           const SizedBox(height: 22),
           const SizedBox(
@@ -417,7 +458,7 @@ class _Sidebar extends StatelessWidget {
       (Icons.history_rounded, '历史开奖'),
       (Icons.analytics_outlined, '统计分析'),
       (Icons.science_outlined, '策略回测'),
-      (Icons.confirmation_number_outlined, '智能选号'),
+      (Icons.confirmation_number_outlined, '选号验奖'),
     ];
 
     return Container(
@@ -717,7 +758,7 @@ class _TopBar extends StatelessWidget {
             onPressed: () => showServerSettings(context, state),
             icon: const Icon(Icons.settings_outlined, size: 19),
             color: AppColors.muted,
-            tooltip: '服务器设置（当前：${state.apiBase}）',
+            tooltip: '数据服务（当前：${state.apiBaseLabel}）',
           ),
           const SizedBox(width: 4),
           _SyncButton(state: state),

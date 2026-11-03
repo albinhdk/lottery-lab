@@ -1,6 +1,8 @@
 # 彩票实验室 · Lottery Lab
 
-一个**不承诺预测**的彩票数据分析与回测工具。后端 Rust，前端 Flutter（Windows 桌面 + Web）。
+<img src="docs/icon.png" width="92" align="right" alt="应用图标">
+
+一个**不承诺预测**的彩票数据分析与回测工具。后端 Rust，前端 Flutter（Windows 桌面 + Web + Android）。
 
 支持中国福利彩票「双色球」与中国体育彩票「超级大乐透」，内置 2003 年至今的官方历史数据同步、频率/遗漏/组合结构分析、9 项随机性检验，以及 8 个选号策略的严格走查回测。
 
@@ -24,6 +26,7 @@
 - 双色球：福彩官方接口（2013 至今）+ 500.com 历史表补齐 2003–2012，共 3520 期
 - 超级大乐透：体彩官方接口，2007 年至今 2940 期
 - 本地 SQLite 缓存，支持一键同步、按期号检索、日期范围筛选、分页浏览、CSV 导出
+- **Android 内置引擎**：APK 内直接运行同一套 Rust 后端与 SQLite 数据库，首次启动自带完整历史，离线也能做全部分析与回测；联网时可在手机上直接同步官方数据，不再依赖电脑
 
 ### 统计
 - **频率分布**：每个号码的出现次数、z 分数、当前遗漏、平均/最大间隔、χ² 均匀性检验、归一化熵
@@ -38,8 +41,9 @@
 - 指标：平均命中 vs 理论期望、z 值、p 值、ROI 及自助法 95% 置信区间、Brier 分数 vs 随机基线、奖级分布、累计盈亏曲线
 - 结果会明确告诉你：没有任何策略能稳定跑赢随机基线
 
-### 选号
+### 选号与验奖
 - 按策略生成号码，支持一次多注、一键复制
+- **手选验奖**：选择已开奖期次，点选号码后显示命中号码、奖级与奖金；一、二等奖按长期估算值标注
 - 生成结果附带概率说明与免责声明
 
 ---
@@ -49,8 +53,9 @@
 | 层 | 技术 |
 |---|---|
 | 后端 | Rust 2024 · axum 0.8 · rusqlite（bundled） · reqwest · rand/ChaCha8 |
+| 移动端 | 同一后端编译为 `cdylib`，通过 Dart FFI 在 App 进程内启动 loopback HTTP 服务 |
 | 前端 | Flutter 3.47 · Dart 3.13 · fl_chart · http |
-| 数据 | SQLite（WAL 模式，`backend/data/lottery.db`） |
+| 数据 | SQLite（WAL 模式，`backend/data/lottery.db`；Android 使用 App 私有目录） |
 | 字体 | Noto Sans SC 子集（内置，约 1.2 MB/字重，SIL OFL） |
 
 ---
@@ -65,7 +70,7 @@
 ### 运行
 
 ```bat
-:: 1. 启动后端（首次启动会自动同步历史数据，约 30 秒）
+:: 1. 启动后端（首次启动会自动同步历史数据，约 30 秒；之后每 10 分钟自动检查最新一期）
 cd backend
 cargo run
 
@@ -76,6 +81,8 @@ flutter run -d windows
 
 或者直接双击根目录的 `run.bat`：它会启动后端并打开已构建的桌面程序（若尚未构建则回退到 `flutter run`）。
 
+后端会常驻后台做增量同步：每 10 分钟抓取官方最新一页并写入 SQLite，开奖后无需手动点「同步数据」。间隔可用环境变量 `LOTTERY_SYNC_INTERVAL_SECS` 调整（最小 60 秒）。
+
 ### 构建发布版
 
 ```bat
@@ -85,6 +92,12 @@ build.bat
 产物：
 - 后端：`backend/target/release/lottery_lab_backend.exe`
 - 桌面端：`frontend/build/windows/x64/runner/Release/lottery_lab_app.exe`
+
+应用图标（烧瓶 + 三色彩票球）由脚本生成，改动设计后运行：
+
+```bat
+python tools\\make_icons.py
+```
 
 ### Web 模式
 
@@ -97,18 +110,35 @@ flutter build web --release
 
 ### Android APK
 
-1. 电脑端启动后端（默认监听 `0.0.0.0:8787`，手机才能访问）：
-   ```bat
-   cd backend
-   cargo run
-   ```
-   首次运行 Windows 防火墙会询问，请允许「专用网络」访问。
-2. 手机与电脑连接同一个 Wi-Fi。
-3. 安装 `frontend/build/app/outputs/flutter-apk/app-release.apk`。
-4. 打开 App，点右上角齿轮，填写电脑的局域网地址（例如 `http://192.168.1.10:8787`），点「保存并连接」。
-   构建时已预填本机当时的局域网地址，IP 变化后在 App 内改即可。
+APK 内置了 Rust 后端和一份完整历史数据库，**不需要电脑**即可使用：
 
-> 手机端使用底部导航，桌面/Web 使用左侧栏；两套布局共用同一份代码。
+1. 安装 `frontend/build/app/outputs/flutter-apk/app-release.apk`。
+2. 打开 App，首次启动会把 APK 内置的 `lottery.db` 复制到 App 私有目录（约 1 MB），随后直接加载数据。
+3. 联网时后台每 10 分钟自动检查最新一期，开奖后无需手动操作；点右上角「同步数据」可立即全量同步。同步失败不影响已有历史。
+
+如果确实想连接电脑上的后端（例如多人共用一份数据），在右上角齿轮 →「数据服务」里填写电脑地址并保存即可；随时可以切回「内置引擎」。
+
+构建 APK：
+
+```bat
+:: 0. 首次构建需要 Rust 的 Android target（已装可跳过）
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+
+:: 1. 刷新要打包进 APK 的种子数据库（需先同步过后端）
+python tools\\refresh_seed_db.py
+
+:: 2. 交叉编译 Rust 后端为 Android 动态库（需要 NDK）
+python tools\\build_android_backend.py
+
+:: 3. 构建 APK
+cd frontend
+flutter build apk --release
+```
+
+也可以直接双击 `build_android.bat`，它会依次完成上面三步并把 APK 复制到 `dist/lottery-lab-android.apk`。
+
+> APK 约 79 MB（arm64-v8a / armeabi-v7a / x86_64 三个 ABI 都内置了后端）。只给自己手机装的话，可以用
+> `flutter build apk --release --target-platform android-arm64` 生成更小的单 ABI 包。
 > APK 使用 debug 签名，适合自己安装测试；上架应用商店需要换成正式签名。
 
 ---
@@ -118,9 +148,9 @@ flutter build web --release
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
 | `LOTTERY_DB` | `data/lottery.db` | SQLite 路径（相对后端工作目录） |
-| `LOTTERY_ADDR` | `0.0.0.0:8787` | 监听地址（默认对局域网开放，手机 APK 才能连接；仅本机使用可设为 `127.0.0.1:8787`） |
+| `LOTTERY_ADDR` | `0.0.0.0:8787` | 监听地址（桌面/Web 或远程模式使用；手机内置引擎只监听 `127.0.0.1` 的随机端口） |
 | `LOTTERY_WEB_DIR` | `../frontend/build/web` | Web 构建目录 |
-| `API_BASE`（Flutter 编译期） | `http://127.0.0.1:8787` | `flutter build web --dart-define=API_BASE=...` |
+| `API_BASE`（Flutter 编译期） | `http://127.0.0.1:8787` | 桌面/Web 的默认后端地址；Android 默认用内置引擎，此项仅作回退 |
 
 ---
 
@@ -140,6 +170,7 @@ flutter build web --release
 | GET | `/api/strategies` | 策略列表 |
 | POST | `/api/backtest` | 走查回测 |
 | POST | `/api/tickets` | 生成号码 |
+| POST | `/api/prize-check` | 手选号码验奖（`game`、可选 `issue`、`primary`、`secondary`） |
 | POST | `/api/sync` | 同步官方数据 |
 | POST | `/api/import` | 导入 CSV（`issue,date,primary,secondary`，号码空格分隔） |
 
@@ -187,11 +218,14 @@ cd frontend && flutter analyze
 lottery-lab/
 ├── backend/                  # Rust API 服务
 │   ├── src/
-│   │   ├── main.rs           # 启动、静态文件、自动同步
+│   │   ├── main.rs           # 独立服务：启动、静态文件、自动同步
+│   │   ├── lib.rs            # 共享路由 / 自动同步，供桌面与手机复用
+│   │   ├── embedded.rs       # C ABI：在 App 进程内启动 loopback 服务
 │   │   ├── routes.rs         # REST 路由
 │   │   ├── db.rs             # SQLite 封装
 │   │   ├── models.rs         # Draw / Prediction
 │   │   ├── config.rs         # 彩种定义、奖级表
+│   │   ├── prize.rs          # 手选号码验奖：命中数 → 奖级 / 奖金
 │   │   ├── sources.rs        # 官方数据抓取与 500.com 解析
 │   │   ├── stats.rs          # 卡方、正态、gamma、游程、二项分布
 │   │   ├── analysis.rs       # 频率、遗漏、组合结构、随机性检验
@@ -199,17 +233,26 @@ lottery-lab/
 │   │   └── backtest.rs       # 走查回测与指标
 │   └── data/lottery.db       # 运行时生成
 ├── frontend/                 # Flutter 应用
-│   └── lib/
-│       ├── main.dart         # 侧边栏 + 页面框架
-│       ├── api.dart          # HTTP 客户端
-│       ├── app_state.dart    # 全局状态
-│       ├── models.dart       # 数据模型
-│       ├── theme.dart        # 深色主题
-│       ├── pages/            # 概览 / 历史 / 分析 / 回测 / 选号
-│       └── widgets/          # 球、面板、徽标等
+│   ├── lib/
+│   │   ├── main.dart         # 侧边栏 + 页面框架
+│   │   ├── api.dart          # HTTP 客户端
+│   │   ├── app_state.dart    # 全局状态、内置/远程模式切换
+│   │   ├── embedded/         # Dart FFI 启动内置 Rust 后端
+│   │   ├── models.dart       # 数据模型
+│   │   ├── theme.dart        # 深色主题
+│   │   ├── pages/            # 概览 / 历史 / 分析 / 回测 / 选号
+│   │   └── widgets/          # 球、面板、徽标等
+│   ├── assets/lottery.db     # 打包进 APK 的种子数据库
+│   └── android/.../jniLibs/  # 交叉编译生成的 liblottery_lab_backend.so
+├── tools/
+│   ├── build_android_backend.py  # 编译 Android 动态库
+│   ├── refresh_seed_db.py        # 刷新 APK 种子数据库
+│   ├── make_icons.py             # 生成应用图标
+│   └── subset_font.py            # 生成中文字体子集
 ├── docs/                     # 截图
 ├── run.bat                   # 启动后端 + 桌面端
-└── build.bat                 # 构建发布版
+├── build.bat                 # 构建桌面 / Web 发布版
+└── build_android.bat         # 构建内置引擎 APK
 ```
 
 ---

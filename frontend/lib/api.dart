@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'models.dart';
@@ -14,14 +13,12 @@ class ApiException implements Exception {
 }
 
 class Api {
-  /// The PC backend's LAN address, used by the Android build by default.
-  /// It can be changed at runtime in the app's server settings.
-  static const String _lanBase = 'http://198.1.7.177:8787';
-
+  /// Used by desktop/web builds and as the fallback when the Android
+  /// embedded engine cannot start. The Android app normally talks to the
+  /// in-process backend on a loopback port instead.
   static String get defaultBase {
     const fromEnv = String.fromEnvironment('API_BASE');
     if (fromEnv.isNotEmpty) return fromEnv;
-    if (defaultTargetPlatform == TargetPlatform.android) return _lanBase;
     return 'http://127.0.0.1:8787';
   }
 
@@ -186,6 +183,21 @@ class Api {
       'strategy': strategy,
       'count': count,
     }) as Map<String, dynamic>;
+  }
+
+  Future<PrizeCheckResult> prizeCheck({
+    required String game,
+    String? issue,
+    required List<int> primary,
+    required List<int> secondary,
+  }) async {
+    final data = await _post('/api/prize-check', {
+      'game': game,
+      if (issue != null && issue.isNotEmpty) 'issue': issue,
+      'primary': primary,
+      'secondary': secondary,
+    }) as Map<String, dynamic>;
+    return PrizeCheckResult.fromJson(data);
   }
 
   Future<Map<String, dynamic>> sync(String game) async {

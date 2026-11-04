@@ -15,7 +15,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // 开源仓库中保留 com.example 占位；上架应用商店前必须改成自有域名反写。
+        // 注意：修改 applicationId 会改变 Android 上的应用数据目录，升级用户的已有数据不会自动迁移。
         applicationId = "com.example.lottery_lab_app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -31,8 +32,8 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // 开源仓库默认使用 debug 签名，便于自行安装测试；上架应用商店需配置正式签名。
+            // debug 签名密钥由 Android SDK 在本机生成，不包含在仓库中。
             signingConfig = signingConfigs.getByName("debug")
         }
     }

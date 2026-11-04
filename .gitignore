@@ -19,3 +19,7 @@ dist/
 .idea/
 .vscode/
 *.iml
+
+# 本机分析过程的中间产物（OSS 就绪度评估等），不属于项目源码
+clear/
+reports/

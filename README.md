@@ -70,7 +70,7 @@
 ## 快速开始（Windows）
 
 ### 环境
-- Rust 1.85+（`cargo --version`）
+- Rust 1.85+（`backend/Cargo.toml` 使用 `edition = "2024"`，需 1.85 及以上；`cargo --version`）
 - Flutter 3.35+，并启用 Windows 桌面支持（`flutter doctor`）
 - Visual Studio 2022 生成工具（Flutter Windows 构建需要）
 
@@ -264,6 +264,9 @@ lottery-lab/
 │   ├── make_icons.py             # 生成应用图标
 │   └── subset_font.py            # 生成中文字体子集
 ├── docs/                     # 截图
+├── LICENSE / THIRD_PARTY_NOTICES.md / CONTRIBUTING.md
+├── SECURITY.md / CODE_OF_CONDUCT.md / CHANGELOG.md
+├── .github/                  # Issue 与 PR 模板
 ├── run.bat                   # 启动后端 + 桌面端
 ├── build.bat                 # 构建桌面 / Web 发布版
 └── build_android.bat         # 构建内置引擎 APK
@@ -275,3 +278,16 @@ lottery-lab/
 
 本项目仅用于统计学习与数据分析，不构成任何购彩建议。彩票具有随机性与负期望，请理性购彩、量力而行；未成年人不得购买彩票。
 
+---
+
+## 许可证
+
+本项目源码采用 [MIT](LICENSE) 许可。
+
+仓库内包含的第三方资产（Noto Sans SC 字体子集、公开开奖数据）**不适用** MIT，
+其来源与各自许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+- 贡献前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)（含不可退让的技术约束）
+- 安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告，不要开公开 issue
+- 参与行为受 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) 约束
+- 版本变更记录见 [CHANGELOG.md](CHANGELOG.md)

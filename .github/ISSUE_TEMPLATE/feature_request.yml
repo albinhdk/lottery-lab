@@ -1,0 +1,38 @@
+name: 功能建议
+description: 提出一个新功能或改进
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        本项目定位是**统计分析与回测工具，不是预测器**。
+        暗示「能提高中奖概率」的提案会被关闭；与购彩记录相关的提案只能是记账/对账，
+        不能是号码推荐。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决什么问题
+      description: 描述场景与痛点，而不是直接描述你设想的实现。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议的方案
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 相关截图、数据、链接
+    validations:
+      required: false

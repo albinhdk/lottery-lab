@@ -1,0 +1,61 @@
+name: Bug 报告
+description: 报告一个可复现的缺陷
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请确认：已搜索过现有 issue；能稳定复现；不是「策略回测没有跑赢随机」这类预期结果
+        （本工具是统计分析器，不是预测器，没有任何策略能稳定跑赢随机基线）。
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 现象
+      description: 实际发生了什么？附上报错原文或截图。
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 一步一步写清，尽量给出最小路径。
+      placeholder: |
+        1. 启动后端 `cd backend && cargo run`
+        2. 打开「随机性检验」页
+        3. 窗口切到「全部历史」
+        4. 看到 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 运行平台
+      options:
+        - Windows 桌面
+        - Web
+        - Android
+        - 仅后端（cargo）
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 后端 `cargo pkgid` / APK 版本号 / commit hash
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境
+      description: Rust / Flutter 版本、操作系统、设备型号（Android）
+    validations:
+      required: false

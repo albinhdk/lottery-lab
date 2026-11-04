@@ -46,6 +46,13 @@
 - **手选验奖**：选择已开奖期次，点选号码后显示命中号码、奖级与奖金；一、二等奖按长期估算值标注
 - 生成结果附带概率说明与免责声明
 
+### 我的彩票
+- **按注记录**：一注一行，记录彩种、期号、号码、倍数、备注；重复录入自动去重
+- **追号**：同一注号码连买 1/2/3/5/10 期，展开为独立记录各自对奖
+- **自动对奖**：后端每次拉到新开奖就结算该期所有待开奖的注，纯本地计算、不额外请求网络。桌面端常驻后端约 10 分钟内完成；App 端在启动、切前台和每 5 分钟兜底补对
+- **总账**：总投入 / 总奖金 / 净收益，按奖级分组的统计
+- **浮动奖金**：一、二等奖先按长期均值估算并标注，到账后可手工改成实际金额，重算对奖不会覆盖它
+
 ---
 
 ## 技术栈
@@ -171,6 +178,12 @@ flutter build apk --release
 | POST | `/api/backtest` | 走查回测 |
 | POST | `/api/tickets` | 生成号码 |
 | POST | `/api/prize-check` | 手选号码验奖（`game`、可选 `issue`、`primary`、`secondary`） |
+| GET | `/api/bets?game=&status=&page=&page_size=` | 购彩记录分页（`status` = `pending`/`won`/`lost`） |
+| POST | `/api/bets` | 保存购彩记录（`game` + `bets` 数组，支持一次多注） |
+| GET | `/api/bets/summary?game=` | 总投入 / 总奖金 / 净收益 / 奖级分布 |
+| POST | `/api/bets/check` | 手动对奖（`full: true` 时重算已结算记录） |
+| DELETE | `/api/bets/{id}` | 删除一条记录 |
+| PATCH | `/api/bets/{id}/actual-amount` | 填写一、二等奖的实际到账金额 |
 | POST | `/api/sync` | 同步官方数据 |
 | POST | `/api/import` | 导入 CSV（`issue,date,primary,secondary`，号码空格分隔） |
 
@@ -208,7 +221,7 @@ cd frontend && flutter test
 cd frontend && flutter analyze
 ```
 
-当前状态：后端 14 个单元测试全部通过，前端 2 个测试通过，`flutter analyze` 无告警。
+当前状态：后端 37 个单元测试全部通过，前端 15 个测试通过，`flutter analyze` 无告警。
 
 ---
 
@@ -226,6 +239,7 @@ lottery-lab/
 │   │   ├── models.rs         # Draw / Prediction
 │   │   ├── config.rs         # 彩种定义、奖级表
 │   │   ├── prize.rs          # 手选号码验奖：命中数 → 奖级 / 奖金
+│   │   ├── bets.rs           # 购彩记录、自动对奖、总账统计
 │   │   ├── sources.rs        # 官方数据抓取与 500.com 解析
 │   │   ├── stats.rs          # 卡方、正态、gamma、游程、二项分布
 │   │   ├── analysis.rs       # 频率、遗漏、组合结构、随机性检验
@@ -240,8 +254,8 @@ lottery-lab/
 │   │   ├── embedded/         # Dart FFI 启动内置 Rust 后端
 │   │   ├── models.dart       # 数据模型
 │   │   ├── theme.dart        # 深色主题
-│   │   ├── pages/            # 概览 / 历史 / 分析 / 回测 / 选号
-│   │   └── widgets/          # 球、面板、徽标等
+│   │   ├── pages/            # 概览 / 历史 / 分析 / 回测 / 选号 / 我的彩票
+│   │   └── widgets/          # 球、面板、徽标、录入表单等
 │   ├── assets/lottery.db     # 打包进 APK 的种子数据库
 │   └── android/.../jniLibs/  # 交叉编译生成的 liblottery_lab_backend.so
 ├── tools/
@@ -260,3 +274,4 @@ lottery-lab/
 ## 免责声明
 
 本项目仅用于统计学习与数据分析，不构成任何购彩建议。彩票具有随机性与负期望，请理性购彩、量力而行；未成年人不得购买彩票。
+

@@ -13,6 +13,7 @@
   - `routes.rs` — REST 路由与错误处理
   - `db.rs` — SQLite（WAL），`Mutex<Connection>`，按 game 隔离
   - `prize.rs` — 手选号码验奖：命中数 → 奖级 / 奖金（复用 `config::prize`）
+  - `bets.rs` — 购彩记录（`bets` 表与 `draws` 共享连接）、自动对奖、总账统计
   - `sources.rs` — 福彩官方 JSON、体彩官方 JSON、500.com HTML 解析
   - `stats.rs` — 卡方/正态/gamma/游程/二项分布等数学函数
   - `analysis.rs` — 频率、遗漏、组合结构、9 项随机性检验
@@ -22,8 +23,10 @@
   - `main.dart` — 侧边栏 + `IndexedStack` 页面框架
   - `app_state.dart` — 全局状态、内置引擎/远程服务器模式切换
   - `embedded/` — Dart FFI 加载 `liblottery_lab_backend.so`，复制种子 DB 并取得 loopback 端口
-  - `pages/` — overview / history / analysis / backtest / tickets
+  - `pages/` — overview / history / analysis / backtest / tickets / my_bets
   - `widgets/common.dart` — Panel、Ball、StatTile、VerdictChip 等
+  - `widgets/bet_card.dart` / `bet_entry_form.dart` / `bet_entry.dart` — 记录卡片、录入表单、号码选择器
+  - `models_bet.dart` — Bet / BetStatus / BetSummary 等模型
 - `frontend/assets/lottery.db` — 打包进 APK 的种子数据库（`tools/refresh_seed_db.py` 生成）
 - `frontend/android/app/src/main/jniLibs/<abi>/` — 交叉编译产物（`tools/build_android_backend.py` 生成）
 
@@ -45,6 +48,10 @@
 14. **移动端同步走 webpki 根证书**。`sources.rs` 的 reqwest 使用 `tls_backend_preconfigured` + `webpki-roots`，因为 Android 内置进程没有初始化 `rustls-platform-verifier` 的 JNI Context；改回默认 TLS 会在手机上 panic。
 15. **图标由脚本生成**。Android 自适应图标、Web 图标、Windows `.ico` 都来自 `tools/make_icons.py`；不要用 Flutter 默认图标覆盖。
 16. **自动同步是常驻的增量任务**。`spawn_auto_sync` 在空库时全量同步，之后每 10 分钟只抓官方第一页（`sources::fetch_recent`，30 期）并 upsert；不要把定时检查改回全量翻页。间隔用 `LOTTERY_SYNC_INTERVAL_SECS` 调整（最小 60 秒）。前端每 2 分钟静默刷新 `/api/games`，只有最新期号变化时才递增 `dataRevision` 重挂页面，避免打断正在看的分析/回测结果。
+17. **自动对奖挂在同步之后**。`sync_once` 写入新开奖后立刻调用 `db.check_pending_bets`，用最近 400 期做 (game, issue) → draw 查找并结算该期所有 `pending` 注；纯本地计算、不请求网络、不改 `draws`。已结算的注不会被重算，所以用户手填的 `actual_amount` 不会丢。前端在启动、`didChangeAppLifecycleState(resumed)` 和每 5 分钟的兜底定时器里调 `POST /api/bets/check`，覆盖"App 关着时开奖了"的情况。
+18. **`bets` 与 `draws` 共享同一个连接**。`Db::open` 把 `Arc<Mutex<Connection>>` 交给 `BetStore::new`，不要为 `bets` 另开连接：WAL 下单库多写连接会引入锁竞争，而且自动对奖需要和同步写在同一把锁里。
+19. **购彩记录只记账，不推荐**。`bets` 表存用户买了什么、中没中；任何文案都不能把它包装成"提高中奖概率"的手段。一、二等奖默认按 `config::prize` 的估值填充并标 `estimated`，只有用户主动填 `actual_amount` 才按实付计账。
+20. **`TextField` 在 `Panel` 里必须包 `Material`**。`Panel` 是普通 `Container`，没有 Material 祖先时 `TextField` 直接抛异常（备注输入框踩过）。
 
 ## 命令
 
@@ -70,7 +77,7 @@ build_android.bat                            # 一键构建 APK
 
 - 内置后端需要 Rust Android target（`aarch64-linux-android` / `armv7-linux-androideabi` / `x86_64-linux-android`）和 NDK；`tools/build_android_backend.py` 会自动定位 NDK 并设置 `CC`/`AR`/linker 环境变量。
 - `liblottery_lab_backend.so` 必须保持 16 KB 页对齐（NDK 28 默认满足）。Google Play 上架前用 `llvm-readelf -l` 检查 LOAD 段对齐是否为 `0x4000`。
-- 本机 Pub 缓存在 C 盘、项目在 D 盘，Kotlin 增量编译会报 “different roots”，因此 `frontend/android/gradle.properties` 设置了 `kotlin.incremental=false`。不要随意删掉，除非把项目/缓存放到同一盘。
-- 构建 APK 时如果 Gradle 依赖下载卡住，给 Gradle 加代理：`JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7890 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7890" flutter build apk --release`。
+- Kotlin 增量编译已在 `frontend/android/gradle.properties` 中关闭（`kotlin.incremental=false`）：当 Pub 缓存目录与项目目录不在同一个盘时，Kotlin 增量编译会报 “different roots”。把项目和缓存放到同一盘后可重新打开。
+- 构建 APK 时如果 Gradle 依赖下载卡住，给 Gradle 加代理：`JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=<host> -Dhttp.proxyPort=<port> -Dhttps.proxyHost=<host> -Dhttps.proxyPort=<port>" flutter build apk --release`。
 - APK 默认使用 debug 签名，可直接安装测试；上架需配置正式签名。
 - 通用 APK 约 79 MB；只给自己手机装可用 `flutter build apk --release --target-platform android-arm64` 生成单 ABI 包。

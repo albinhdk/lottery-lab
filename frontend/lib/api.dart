@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'models.dart';
+import 'models_bet.dart';
 
 class ApiException implements Exception {
   final String message;
@@ -79,6 +80,43 @@ class Api {
       throw ApiException('无法连接后端：$e');
     }
   }
+
+  Future<dynamic> _request(
+    String method,
+    String path, [
+    Map<String, dynamic>? body,
+  ]) async {
+    try {
+      final uri = _uri(path);
+      late final http.Response res;
+      switch (method) {
+        case 'DELETE':
+          res = await _client.delete(uri).timeout(const Duration(seconds: 60));
+          break;
+        case 'PATCH':
+          res = await _client
+              .patch(
+                uri,
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode(body ?? const <String, dynamic>{}),
+              )
+              .timeout(const Duration(seconds: 60));
+          break;
+        default:
+          throw ApiException('不支持的请求方法: $method');
+      }
+      return _decode(res);
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ApiException('无法连接后端：$e');
+    }
+  }
+
+  Future<dynamic> _delete(String path) => _request('DELETE', path);
+
+  Future<dynamic> _patch(String path, Map<String, dynamic> body) =>
+      _request('PATCH', path, body);
 
   Future<dynamic> _post(
     String path,
@@ -198,6 +236,68 @@ class Api {
       'secondary': secondary,
     }) as Map<String, dynamic>;
     return PrizeCheckResult.fromJson(data);
+  }
+
+  // -------------------------------------------------------------------------
+  // Bets: personal ticket records and automatic prize checking
+  // -------------------------------------------------------------------------
+
+  /// Saves one or more tickets. The backend expands nothing: the caller sends
+  /// one entry per issue, so a multi-issue ("追号") purchase arrives as
+  /// several independent records.
+  Future<BetSaveResult> createBets({
+    required String game,
+    required List<Map<String, dynamic>> bets,
+  }) async {
+    final data = await _post('/api/bets', {
+      'game': game,
+      'bets': bets,
+    }) as Map<String, dynamic>;
+    return BetSaveResult.fromJson(data);
+  }
+
+  Future<Map<String, dynamic>> bets({
+    String? game,
+    String? status,
+    int page = 1,
+    int pageSize = 50,
+  }) async {
+    return await _get('/api/bets', {
+          if (game != null && game.isNotEmpty) 'game': game,
+          if (status != null && status.isNotEmpty) 'status': status,
+          'page': page,
+          'page_size': pageSize,
+        })
+        as Map<String, dynamic>;
+  }
+
+  Future<BetSummary> betSummary({String? game}) async {
+    final data = await _get('/api/bets/summary', {
+      if (game != null && game.isNotEmpty) 'game': game,
+    }) as Map<String, dynamic>;
+    return BetSummary.fromJson(data);
+  }
+
+  /// Settles pending bets. Pass [full] to recompute already settled ones;
+  /// any recorded actual amount is preserved.
+  Future<BetCheckResult> checkBets({String? game, bool full = false}) async {
+    final data = await _post('/api/bets/check', {
+      if (game != null && game.isNotEmpty) 'game': game,
+      'full': full,
+    }) as Map<String, dynamic>;
+    return BetCheckResult.fromJson(data);
+  }
+
+  Future<void> deleteBet(int id) async {
+    await _delete('/api/bets/$id');
+  }
+
+  /// Records the real payout of a floating-tier prize. Pass null to fall back
+  /// to the config estimate again.
+  Future<void> setActualAmount(int id, double? amount) async {
+    await _patch('/api/bets/$id/actual-amount', {
+      'amount': amount,
+    });
   }
 
   Future<Map<String, dynamic>> sync(String game) async {

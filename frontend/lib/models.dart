@@ -49,6 +49,9 @@ class GameInfo {
   final Draw? latest;
   final String? firstDate;
   final String? lastDate;
+  /// Suggested issue for a new bet, derived from the numbering scheme. Null
+  /// when there is no history yet.
+  final String? nextIssue;
 
   const GameInfo({
     required this.id,
@@ -65,6 +68,7 @@ class GameInfo {
     this.latest,
     this.firstDate,
     this.lastDate,
+    this.nextIssue,
   });
 
   factory GameInfo.fromJson(Map<String, dynamic> json) {
@@ -85,6 +89,7 @@ class GameInfo {
           : Draw.fromJson(json['latest'] as Map<String, dynamic>),
       firstDate: json['first_date'] as String?,
       lastDate: json['last_date'] as String?,
+      nextIssue: json['next_issue'] as String?,
     );
   }
 

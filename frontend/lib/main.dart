@@ -7,6 +7,7 @@ import 'app_state.dart';
 import 'pages/analysis_page.dart';
 import 'pages/backtest_page.dart';
 import 'pages/history_page.dart';
+import 'pages/my_bets_page.dart';
 import 'pages/overview_page.dart';
 import 'pages/tickets_page.dart';
 import 'theme.dart';
@@ -30,18 +31,24 @@ class _LotteryLabAppState extends State<LotteryLabApp>
     with WidgetsBindingObserver {
   late final AppState _state;
   Timer? _refreshTimer;
+  Timer? _betsTimer;
 
   /// How often the UI asks the backend for the latest issue numbers. The
   /// backend itself polls the official feeds in the background; this timer
   /// only makes the new draws appear without a manual sync.
   static const _refreshEvery = Duration(minutes: 2);
 
+  /// How often the bets are re-checked while the app is in the foreground.
+  /// The backend settles pending bets itself after every sync; this only
+  /// covers the case where a draw landed while the app was suspended.
+  static const _betsCheckEvery = Duration(minutes: 5);
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _state = AppState();
-    _state.init();
+    _state.init().then((_) => _state.checkBets());
     _refreshTimer = Timer.periodic(_refreshEvery, (_) {
       final lifecycle = WidgetsBinding.instance.lifecycleState;
       final active = lifecycle == null ||
@@ -52,18 +59,31 @@ class _LotteryLabAppState extends State<LotteryLabApp>
         _state.refreshGames(silent: true);
       }
     });
+    _betsTimer = Timer.periodic(_betsCheckEvery, (_) {
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      final active = lifecycle == null ||
+          (lifecycle != AppLifecycleState.paused &&
+              lifecycle != AppLifecycleState.detached &&
+              lifecycle != AppLifecycleState.hidden);
+      if (active) {
+        _state.checkBets();
+      }
+    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _state.refreshGames(silent: true);
+      // A draw may have landed while the app was in the background.
+      _state.checkBets();
     }
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _betsTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _state.dispose();
     super.dispose();
@@ -101,6 +121,7 @@ class _Shell extends StatelessWidget {
     ('统计分析', '频率、遗漏、组合结构与严格的随机性检验'),
     ('策略回测', '严格走查：每一期只用此前数据，与随机基线对比'),
     ('选号与验奖', '按策略生成号码，或手选号码核对奖金；都不会提高中奖概率'),
+    ('我的彩票', '记录购买的号码，开奖后自动核对中奖结果'),
   ];
 
   @override
@@ -154,6 +175,7 @@ class _Shell extends StatelessWidget {
       AnalysisPage(key: ValueKey('analysis-${game?.id}-$revision'), state: state),
       BacktestPage(key: ValueKey('backtest-${game?.id}-$revision'), state: state),
       TicketsPage(key: ValueKey('tickets-${game?.id}-$revision'), state: state),
+      MyBetsPage(key: ValueKey('bets-$revision'), state: state),
     ];
     final stack = LazyIndexedStack(
       key: ValueKey('stack-${game?.id}-$revision'),
@@ -337,6 +359,11 @@ class _MobileNav extends StatelessWidget {
           selectedIcon: Icon(Icons.confirmation_number, color: AppColors.accent),
           label: '选号',
         ),
+        NavigationDestination(
+          icon: Icon(Icons.receipt_long_outlined, color: AppColors.faint),
+          selectedIcon: Icon(Icons.receipt_long, color: AppColors.accent),
+          label: '我的',
+        ),
       ],
     );
   }
@@ -459,6 +486,7 @@ class _Sidebar extends StatelessWidget {
       (Icons.analytics_outlined, '统计分析'),
       (Icons.science_outlined, '策略回测'),
       (Icons.confirmation_number_outlined, '选号验奖'),
+      (Icons.receipt_long_outlined, '我的彩票'),
     ];
 
     return Container(

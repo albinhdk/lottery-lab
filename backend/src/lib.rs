@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod bets;
 pub mod backtest;
 pub mod config;
 pub mod db;
@@ -77,10 +78,40 @@ async fn sync_once(db: &Db) {
                             None => tracing::warn!("{} 同步成功但没有返回数据", g.name),
                         }
                     }
+                    // A newly drawn issue settles the bets waiting on it. This
+                    // is the automatic prize check: purely local, no extra
+                    // network call, and `draws` is never modified.
+                    check_bets(db, g.id);
                 }
                 Err(e) => tracing::warn!("{} 写入失败: {e:#}", g.name),
             },
             Err(e) => tracing::warn!("{} 同步失败（稍后自动重试）: {e:#}", g.name),
         }
+    }
+}
+
+/// Settles pending bets for one game against the issues already stored.
+/// Failures are logged and never abort the sync loop.
+fn check_bets(db: &Db, game: &str) {
+    let cache: Vec<crate::models::Draw> = db.recent(game, 400).unwrap_or_default();
+    let lookup = move |game_id: &str, issue: &str| {
+        cache
+            .iter()
+            .find(|d| d.game == game_id && d.issue == issue)
+            .cloned()
+    };
+    match db.check_pending_bets(lookup) {
+        Ok(outcome) => {
+            if outcome.settled > 0 {
+                tracing::info!(
+                    "{} 自动对奖完成：结算 {} 注，其中中奖 {} 注，待开奖 {} 注",
+                    config::game(game).map(|g| g.name).unwrap_or(game),
+                    outcome.settled,
+                    outcome.won,
+                    outcome.still_pending
+                );
+            }
+        }
+        Err(e) => tracing::warn!("{game} 自动对奖失败: {e:#}"),
     }
 }

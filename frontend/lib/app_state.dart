@@ -35,6 +35,14 @@ class AppState extends ChangeNotifier {
   /// reload against the new server.
   int dataRevision = 0;
 
+  /// Suggested issue for a new bet, or null when unknown.
+  String? apiNextIssue(String gameId) {
+    for (final g in games) {
+      if (g.id == gameId) return g.nextIssue;
+    }
+    return null;
+  }
+
   GameInfo? get game {
     for (final g in games) {
       if (g.id == gameId) return g;
@@ -170,6 +178,16 @@ class AppState extends ChangeNotifier {
     if (pageIndex == index) return;
     pageIndex = index;
     notifyListeners();
+  }
+
+  /// Asks the backend to settle pending bets. Called on app start, on
+  /// resume, and on a slow foreground timer, so a draw that landed while the
+  /// app was closed is checked without the user pressing anything. Failures
+  /// are ignored: the next sync retries and the ledger still renders.
+  Future<void> checkBets() async {
+    try {
+      await api.checkBets();
+    } catch (_) {}
   }
 
   Future<void> syncCurrent() async {

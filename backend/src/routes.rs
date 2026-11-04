@@ -11,7 +11,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
-    analysis, backtest, config, db::Db, models::Draw, prize, sources,
+    analysis, backtest,
+    bets::{BetInput, BetStatus},
+    config, db::Db, models::Draw, prize, sources,
     strategies::{StrategyKind, StrategyRunner},
 };
 
@@ -29,6 +31,13 @@ impl AppError {
     pub fn bad(msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
+            message: msg.into(),
+        }
+    }
+
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
             message: msg.into(),
         }
     }
@@ -70,6 +79,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/strategies", get(strategy_list))
         .route("/api/tickets", post(tickets))
         .route("/api/prize-check", post(prize_check))
+        .route("/api/bets", get(list_bets).post(create_bets))
+        .route("/api/bets/summary", get(bets_summary))
+        .route("/api/bets/check", post(check_bets))
+        .route("/api/bets/{id}", axum::routing::delete(delete_bet))
+        .route(
+            "/api/bets/{id}/actual-amount",
+            axum::routing::patch(set_actual_amount),
+        )
         .route("/api/backtest", post(run_backtest))
         .route("/api/sync", post(sync))
         .route("/api/import", post(import))
@@ -117,6 +134,8 @@ async fn games(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
             "latest": latest,
             "first_date": range.as_ref().map(|r| r.0.clone()),
             "last_date": range.as_ref().map(|r| r.1.clone()),
+            // Suggested issue for a new bet, derived from the numbering scheme.
+            "next_issue": state.db.next_issue(g.id)?,
         }));
     }
     Ok(Json(json!({ "games": out })))
@@ -160,10 +179,7 @@ async fn get_draw(
     game_or_err(&game)?;
     match state.db.get(&game, &issue)? {
         Some(d) => Ok(Json(serde_json::to_value(d)?)),
-        None => Err(AppError {
-            status: StatusCode::NOT_FOUND,
-            message: format!("未找到 {game} 期号 {issue}"),
-        }),
+        None => Err(AppError::not_found(format!("未找到 {game} 期号 {issue}"))),
     }
 }
 
@@ -327,7 +343,7 @@ struct PrizeCheckRequest {
     secondary: Vec<u8>,
 }
 
-/// Checks one hand-picked ticket against a draw. When `issue` is omitted the
+/// Checks one hand-picked ticket against a draw. When \`issue\` is omitted the
 /// latest draw is used.
 async fn prize_check(
     State(state): State<AppState>,
@@ -383,14 +399,219 @@ fn validate_pick(nums: &[u8], count: usize, max: u8, label: &str) -> Result<(), 
         )));
     }
     if let Some(bad) = nums.iter().find(|&&n| n < 1 || n > max) {
-        return Err(AppError::bad(format!(
-            "{label}号码 {bad} 超出 1–{max} 范围"
-        )));
+        return Err(AppError::bad(format!("{label}号码 {bad} 超出 1–{max} 范围")));
     }
     if !is_unique(nums) {
         return Err(AppError::bad(format!("{label}号码不能重复")));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Bets: personal ticket records and automatic prize checking
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct CreateBetsRequest {
+    game: String,
+    bets: Vec<BetInput>,
+}
+
+/// Records one or more tickets. The frontend expands a "追号 N 期" request
+/// into N entries before calling this, so each row stays independent and is
+/// settled on its own issue.
+async fn create_bets(
+    State(state): State<AppState>,
+    Json(req): Json<CreateBetsRequest>,
+) -> Result<Json<Value>, AppError> {
+    let g = game_or_err(&req.game)?;
+    if req.bets.is_empty() {
+        return Err(AppError::bad("没有要保存的号码"));
+    }
+    if req.bets.len() > 500 {
+        return Err(AppError::bad("一次最多保存 500 注"));
+    }
+    for bet in &req.bets {
+        if bet.issue.trim().is_empty() {
+            return Err(AppError::bad("期号不能为空"));
+        }
+        validate_pick(&bet.primary, g.primary_count, g.primary_max, g.primary_label)?;
+        validate_pick(
+            &bet.secondary,
+            g.secondary_count,
+            g.secondary_max,
+            g.secondary_label,
+        )?;
+    }
+
+    let outcome = state.db.bets().insert(g.id, &req.bets, g.price)?;
+    // A newly saved bet may target an issue that is already drawn (the user
+    // is backfilling a ticket bought earlier), so check right away.
+    let cache = draw_cache(&state.db, g.id);
+    let checked = state.db.check_pending_bets(lookup(&cache))?;
+    Ok(Json(json!({
+        "game": g.id,
+        "game_name": g.name,
+        "inserted": outcome.inserted,
+        "duplicates": outcome.duplicates,
+        "checked": checked,
+        "total": state.db.bets().page(None, None, 1, 1)?.total,
+    })))
+}
+
+#[derive(Deserialize)]
+struct BetsQuery {
+    #[serde(default)]
+    game: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    page: Option<usize>,
+    #[serde(default)]
+    page_size: Option<usize>,
+}
+
+async fn list_bets(
+    State(state): State<AppState>,
+    Query(q): Query<BetsQuery>,
+) -> Result<Json<Value>, AppError> {
+    if let Some(g) = q.game.as_deref().filter(|g| !g.trim().is_empty()) {
+        game_or_err(g)?;
+    }
+    let status = match q.status.as_deref() {
+        Some("pending") => Some(BetStatus::Pending),
+        Some("won") => Some(BetStatus::Won),
+        Some("lost") => Some(BetStatus::Lost),
+        Some(other) => {
+            return Err(AppError::bad(format!("未知状态筛选: {other}")));
+        }
+        None => None,
+    };
+    let page = state.db.bets().page(
+        q.game.as_deref(),
+        status,
+        q.page.unwrap_or(1),
+        q.page_size.unwrap_or(50),
+    )?;
+    Ok(Json(serde_json::to_value(page)?))
+}
+
+async fn bets_summary(
+    State(state): State<AppState>,
+    Query(q): Query<BetsQuery>,
+) -> Result<Json<Value>, AppError> {
+    if let Some(g) = q.game.as_deref().filter(|g| !g.trim().is_empty()) {
+        game_or_err(g)?;
+    }
+    let summary = state.db.bets().summary(q.game.as_deref())?;
+    Ok(Json(serde_json::to_value(summary)?))
+}
+
+#[derive(Deserialize)]
+struct CheckBetsRequest {
+    #[serde(default)]
+    game: Option<String>,
+    /// When true, already settled bets are recomputed from scratch. Any
+    /// \`actual_amount\` the user entered is preserved.
+    #[serde(default)]
+    full: Option<bool>,
+}
+
+/// Settles pending bets. Called automatically after every sync (see
+/// \`lib.rs\`) and exposed so the UI can force a re-check, for example after
+/// importing corrected draw data.
+async fn check_bets(
+    State(state): State<AppState>,
+    Json(req): Json<CheckBetsRequest>,
+) -> Result<Json<Value>, AppError> {
+    let game = req.game.as_deref().filter(|g| !g.trim().is_empty());
+    if let Some(g) = game {
+        game_or_err(g)?;
+    }
+    let games: Vec<&'static config::GameDef> = match game {
+        Some(g) => vec![config::game(g).expect("checked above")],
+        None => config::GAMES.iter().collect(),
+    };
+    let full = req.full.unwrap_or(false);
+    // One cache covering every requested game: check_pending walks all bets
+    // regardless of game, so a per-game cache would leave the other games'
+    // records unsettled.
+    let mut cache = Vec::new();
+    for g in &games {
+        cache.extend(draw_cache(&state.db, g.id));
+    }
+    let mut settled = 0usize;
+    let mut won = 0usize;
+    let mut still_pending = 0usize;
+    let mut skipped = 0usize;
+    for g in &games {
+        let outcome = if full {
+            state.db.bets().recheck_all(g.id, lookup(&cache))?
+        } else {
+            state.db.check_pending_bets(lookup(&cache))?
+        };
+        settled += outcome.settled;
+        won += outcome.won;
+        still_pending += outcome.still_pending;
+        skipped += outcome.skipped;
+    }
+    Ok(Json(json!({
+        "settled": settled,
+        "won": won,
+        "still_pending": still_pending,
+        "skipped": skipped,
+        "rechecked": full,
+    })))
+}
+
+async fn delete_bet(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, AppError> {
+    if state.db.bets().delete(id)? {
+        Ok(Json(json!({ "deleted": id })))
+    } else {
+        Err(AppError::not_found(format!("未找到编号 {id} 的购彩记录")))
+    }
+}
+
+#[derive(Deserialize)]
+struct ActualAmountRequest {
+    /// In CNY. Omit or null to fall back to the config estimate again.
+    #[serde(default)]
+    amount: Option<f64>,
+}
+
+/// Records the real payout of a floating-tier prize, so the ledger stops
+/// relying on the long-run estimate for that bet.
+async fn set_actual_amount(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<ActualAmountRequest>,
+) -> Result<Json<Value>, AppError> {
+    let amount = req.amount.filter(|a| a.is_finite() && *a >= 0.0);
+    if state.db.bets().set_actual_amount(id, amount)? {
+        Ok(Json(json!({ "id": id, "actual_amount": amount })))
+    } else {
+        Err(AppError::not_found(format!("未找到编号 {id} 的购彩记录")))
+    }
+}
+
+/// Loads the newest issues used to settle pending bets. Bets almost always
+/// target a recent issue, so a bounded window keeps this cheap while still
+/// covering every realistic case.
+fn draw_cache(db: &Db, game: &str) -> Vec<Draw> {
+    db.recent(game, 400).unwrap_or_default()
+}
+
+/// A (game, issue) -> draw lookup over a preloaded window.
+fn lookup(draws: &[Draw]) -> impl Fn(&str, &str) -> Option<Draw> + '_ {
+    move |game: &str, issue: &str| {
+        draws
+            .iter()
+            .find(|d| d.game == game && d.issue == issue)
+            .cloned()
+    }
 }
 
 async fn run_backtest(
@@ -419,6 +640,9 @@ async fn sync(
     let draws = sources::sync(&req.game, full, g).await?;
     let fetched = draws.len();
     let written = state.db.upsert_many(&draws, "official")?;
+    // A fresh draw settles the bets waiting on it.
+    let cache = draw_cache(&state.db, g.id);
+    let checked = state.db.check_pending_bets(lookup(&cache))?;
     let total = state.db.count(&req.game)?;
     let latest = state.db.latest(&req.game)?;
     Ok(Json(json!({
@@ -427,6 +651,8 @@ async fn sync(
         "written": written,
         "total": total,
         "latest": latest,
+        "bets_settled": checked.settled,
+        "bets_won": checked.won,
     })))
 }
 
@@ -480,12 +706,17 @@ async fn import(
         });
     }
     let written = state.db.upsert_many(&draws, "import")?;
+    // Imported draws can settle bets whose issue was missing before.
+    let cache = draw_cache(&state.db, g.id);
+    let checked = state.db.check_pending_bets(lookup(&cache))?;
     Ok(Json(json!({
         "game": g.id,
         "parsed": draws.len(),
         "written": written,
         "skipped": skipped,
         "total": state.db.count(&req.game)?,
+        "bets_settled": checked.settled,
+        "bets_won": checked.won,
     })))
 }
 

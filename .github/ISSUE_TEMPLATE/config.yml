@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: 安全问题
-    url: https://github.com/DK/lottery-lab/blob/main/SECURITY.md
+    url: https://github.com/albinhdk/lottery-lab/blob/main/SECURITY.md
     about: 安全漏洞请按 SECURITY.md 私下报告，不要开公开 issue。
   - name: 使用问题
-    url: https://github.com/DK/lottery-lab/blob/main/CONTRIBUTING.md
+    url: https://github.com/albinhdk/lottery-lab/blob/main/CONTRIBUTING.md
     about: 先看 README 的「快速开始」与 CONTRIBUTING 的约束说明。
   - name: 项目定位说明
-    url: https://github.com/DK/lottery-lab#readme
+    url: https://github.com/albinhdk/lottery-lab#readme
     about: 本工具不承诺预测，任何选号方法都不会提高中奖概率。

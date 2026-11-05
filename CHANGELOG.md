@@ -6,6 +6,11 @@ https://keepachangelog.com/zh-CN/1.1.0/ 。
 
 ## [未发布]
 
+### 计划中
+- 系统通知：开奖日定时提醒「该查奖了」，中奖后本地通知。
+
+## [1.1.1] - 2026-11-05
+
 ### 新增
 - README 新增「支持本项目」小节：爱发电赞助入口（完全自愿，不影响任何功能），并明确声明「万一中奖是运气，与本工具无关」。
 
@@ -21,9 +26,6 @@ https://keepachangelog.com/zh-CN/1.1.0/ 。
   补全历史改到「历史开奖」页的「全量重新同步」（`mode: full`）。`POST /api/sync` 新增 `mode`
   （`recent` 默认 / `official` / `full`），旧的 `full: true` 仍被识别为 `full`。
 - 同步完成的提示改为说明实际结果：「已更新到第 X 期」或「已是最新：第 X 期」。
-
-### 计划中
-- 系统通知：开奖日定时提醒「该查奖了」，中奖后本地通知。
 
 ## [1.1.0] - 2026-11-04
 
@@ -60,8 +62,7 @@ https://keepachangelog.com/zh-CN/1.1.0/ 。
 - Windows 桌面端、Web 模式、CSV 导出与导入。
 - 数据概览、历史开奖、分析、回测、选号等页面，深色主题与 900px 双布局。
 
-[未发布]: https://github.com/DK/lottery-lab/compare/v1.1.0...HEAD
-[1.1.0]: https://github.com/DK/lottery-lab/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/DK/lottery-lab/releases/tag/v1.0.0
-
-> 上面的仓库地址是占位符，仓库公开后请替换为真实地址。
+[未发布]: https://github.com/albinhdk/lottery-lab/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/albinhdk/lottery-lab/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/albinhdk/lottery-lab/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/albinhdk/lottery-lab/releases/tag/v1.0.0

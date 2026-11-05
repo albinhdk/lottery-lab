@@ -1,10 +1,10 @@
 [package]
 name = "lottery_lab_backend"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 description = "彩票实验室后端：彩票历史数据同步、统计分析与严格走查回测"
 license = "MIT"
-repository = "https://github.com/DK/lottery-lab"
+repository = "https://github.com/albinhdk/lottery-lab"
 readme = "../README.md"
 
 [lib]

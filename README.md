@@ -291,3 +291,17 @@ lottery-lab/
 - 安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告，不要开公开 issue
 - 参与行为受 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) 约束
 - 版本变更记录见 [CHANGELOG.md](CHANGELOG.md)
+
+---
+
+## 支持本项目
+
+本工具是免费的，也没有任何广告或内购。如果它帮你省下了一些时间、或者让你更清楚地看到了「彩票开奖确实是随机的」，欢迎请作者喝杯咖啡：
+
+[![爱发电](https://img.shields.io/badge/-%E7%88%B1%E5%8F%91%E7%94%B5-946ce6?style=flat-square)](https://afdian.com/a/lottery-lab)
+
+> **先说清楚**：本工具不承诺、也不能提高中奖概率。万一你真的中了奖，那是你的运气，与本工具无关——但这份心意依然会被当作对「把结论诚实地摆出来」这件事的鼓励。
+
+打赏完全自愿，不影响任何功能的使用。
+
+开源贡献（提 issue、改文档、修 bug）同样是对这个项目最好的支持，见 [CONTRIBUTING.md](CONTRIBUTING.md)。

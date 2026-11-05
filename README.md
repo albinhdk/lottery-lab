@@ -263,7 +263,7 @@ lottery-lab/
 │   ├── refresh_seed_db.py        # 刷新 APK 种子数据库
 │   ├── make_icons.py             # 生成应用图标
 │   └── subset_font.py            # 生成中文字体子集
-├── docs/                     # 截图
+├── docs/                     # 截图（mobile/ 为手机端截图）
 ├── LICENSE / THIRD_PARTY_NOTICES.md / CONTRIBUTING.md
 ├── SECURITY.md / CODE_OF_CONDUCT.md / CHANGELOG.md
 ├── .github/                  # Issue 与 PR 模板

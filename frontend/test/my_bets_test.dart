@@ -21,6 +21,15 @@ class _FakeApi extends Api {
   double? lastActualAmount;
   int? lastActualAmountId;
 
+  /// What the fake `/api/bets/check` endpoint reports. Overridden by tests
+  /// that need a settlement to happen.
+  BetCheckResult checkResult = const BetCheckResult(
+    settled: 0,
+    won: 0,
+    stillPending: 0,
+    skipped: 0,
+  );
+
   @override
   Future<Map<String, dynamic>> bets({
     String? game,
@@ -64,12 +73,7 @@ class _FakeApi extends Api {
   @override
   Future<BetCheckResult> checkBets({String? game, bool full = false}) async {
     checkCalls++;
-    return const BetCheckResult(
-      settled: 0,
-      won: 0,
-      stillPending: 0,
-      skipped: 0,
-    );
+    return checkResult;
   }
 
   @override
@@ -396,6 +400,47 @@ void main() {
     // Both games' statuses survive the re-check: this is the regression.
     expect(find.text('未中奖'), findsWidgets);
     expect(find.text('一等奖'), findsWidgets);
+  });
+
+  testWidgets('a background settlement refreshes the ledger by itself',
+      (tester) async {
+    // Regression: the periodic prize check used to drop its result, so the
+    // page kept showing 待开奖 until the next new issue happened to arrive.
+    final api = _FakeApi()..stored = [_bet(id: 20, issue: '2026126')];
+    final state = _FakeState(api)..seed();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: MyBetsPage(state: state),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('待开奖'), findsWidgets);
+
+    // The draw lands: the bet is settled in the database and the check
+    // reports it, without the page being remounted.
+    api.stored = [_bet(id: 20, issue: '2026126', status: BetStatus.lost)];
+    api.checkResult = const BetCheckResult(
+      settled: 1,
+      won: 0,
+      stillPending: 0,
+      skipped: 0,
+    );
+    await state.checkBets();
+    await tester.pumpAndSettle();
+
+    expect(state.betsRevision, 1);
+    expect(find.text('未中奖'), findsWidgets);
+  });
+
+  test('a check that settles nothing leaves the ledger alone', () async {
+    final api = _FakeApi();
+    final state = _FakeState(api)..seed();
+    await state.checkBets();
+    expect(api.checkCalls, 1);
+    // No reload is queued: every poll would otherwise reset the user's
+    // filters and scroll position for nothing.
+    expect(state.betsRevision, 0);
   });
 
   test('Bet parses the backend payload including actual amount overrides', () {

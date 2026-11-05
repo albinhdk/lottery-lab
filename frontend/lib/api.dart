@@ -300,10 +300,15 @@ class Api {
     });
   }
 
-  Future<Map<String, dynamic>> sync(String game) async {
+  /// Pulls official data for [game]. [mode] selects how much to fetch:
+  /// "recent" (the default) reads only the newest official page, so it answers
+  /// "did the draw land yet?" in about a second; "official" walks every
+  /// official page and "full" adds the 2003–2012 backfill — the repair path,
+  /// which takes a while.
+  Future<Map<String, dynamic>> sync(String game, {String mode = 'recent'}) async {
     return await _post(
       '/api/sync',
-      {'game': game, 'full': true},
+      {'game': game, 'mode': mode},
       timeout: const Duration(seconds: 300),
     ) as Map<String, dynamic>;
   }

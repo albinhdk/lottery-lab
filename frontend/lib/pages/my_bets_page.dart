@@ -38,19 +38,46 @@ class _MyBetsPageState extends State<MyBetsPage> {
   int _total = 0;
   String? _statusFilter;
 
+  /// Last `AppState.betsRevision` this page has already reloaded for, so a
+  /// remount (new `dataRevision`) doesn't reload twice in a row.
+  int _seenBetsRevision = 0;
+
   Api get api => widget.state.api;
 
   @override
   void initState() {
     super.initState();
+    // The background prize check settles bets without remounting the page;
+    // follow it so the ledger catches up on its own instead of waiting for
+    // the next new issue to appear.
+    _seenBetsRevision = widget.state.betsRevision;
+    widget.state.addListener(_onAppStateChanged);
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    widget.state.removeListener(_onAppStateChanged);
+    super.dispose();
+  }
+
+  void _onAppStateChanged() {
+    if (!mounted) return;
+    final revision = widget.state.betsRevision;
+    if (revision == _seenBetsRevision) return;
+    _seenBetsRevision = revision;
+    _load(silent: true);
+  }
+
+  /// Reloads the ledger. [silent] keeps the current rows on screen instead of
+  /// flashing a spinner, which is what a background settlement wants.
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final results = await Future.wait([
         api.bets(page: _page, pageSize: 50, status: _statusFilter),
@@ -71,6 +98,8 @@ class _MyBetsPageState extends State<MyBetsPage> {
       });
     } catch (e) {
       if (!mounted) return;
+      // A silent reload keeps the last good rows; the next check retries.
+      if (silent) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -78,9 +107,9 @@ class _MyBetsPageState extends State<MyBetsPage> {
     }
   }
 
-  /// Runs the backend check, then reloads. Called on app start and whenever
-  /// the page becomes visible, so a draw that landed while the app was closed
-  /// is settled without the user pressing anything.
+  /// Runs the backend check, then reloads. Wired to the pull-to-refresh
+  /// gesture and the re-check button; the background check settles on its own
+  /// and reaches this page through `AppState.betsRevision`.
   Future<void> _checkAndReload({bool full = false}) async {
     if (_checking) return;
     setState(() => _checking = true);

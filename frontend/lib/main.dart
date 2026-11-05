@@ -39,9 +39,12 @@ class _LotteryLabAppState extends State<LotteryLabApp>
   static const _refreshEvery = Duration(minutes: 2);
 
   /// How often the bets are re-checked while the app is in the foreground.
-  /// The backend settles pending bets itself after every sync; this only
-  /// covers the case where a draw landed while the app was suspended.
-  static const _betsCheckEvery = Duration(minutes: 5);
+  /// The backend settles pending bets itself after every sync; this covers
+  /// the case where a draw landed while the app was suspended, or where a
+  /// sync failed. Kept in step with [_refreshEvery] because the check is
+  /// purely local — one HTTP call against the existing database, no extra
+  /// network fetch — and it is what now drives the ledger's own refresh.
+  static const _betsCheckEvery = Duration(minutes: 2);
 
   @override
   void initState() {
@@ -74,10 +77,16 @@ class _LotteryLabAppState extends State<LotteryLabApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _state.refreshGames(silent: true);
-      // A draw may have landed while the app was in the background.
-      _state.checkBets();
+      // Settle first, then refresh. Refreshing first would remount the pages
+      // with pre-check data, so anything the check settles while the app was
+      // in the background would only show up at the next poll.
+      _resume();
     }
+  }
+
+  Future<void> _resume() async {
+    await _state.checkBets();
+    await _state.refreshGames(silent: true);
   }
 
   @override
@@ -441,11 +450,11 @@ class _SyncButton extends StatelessWidget {
               )
             : const Icon(Icons.cloud_sync_outlined, size: 20),
         color: AppColors.muted,
-        tooltip: '同步数据',
+        tooltip: '检查最新开奖（只拉最近一页，很快）',
       );
     }
     return Tooltip(
-      message: '从官方数据源重新同步历史开奖',
+      message: '从官方数据源检查最新开奖；要补全历史请到「历史开奖」页',
       child: PrimaryButton(
         label: state.syncing ? '同步中…' : '同步数据',
         icon: Icons.cloud_sync_outlined,

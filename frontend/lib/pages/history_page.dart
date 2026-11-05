@@ -121,6 +121,24 @@ class _HistoryPageState extends State<HistoryPage> {
     }
   }
 
+  /// Walks every official page (plus the 2003–2012 backfill) to repair a
+  /// database with gaps. The toolbar button only checks the newest page,
+  /// which is all the day-to-day case needs.
+  Future<void> _fullSync() async {
+    await widget.state.syncCurrent(mode: 'full');
+    if (!mounted) return;
+    final message = widget.state.toast;
+    if (message == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(fontSize: 12)),
+        behavior: SnackBarBehavior.floating,
+        width: 300,
+        backgroundColor: AppColors.surfaceHi,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final g = game;
@@ -161,6 +179,13 @@ class _HistoryPageState extends State<HistoryPage> {
                       tooltip: '导出 CSV',
                     ),
                     IconButton(
+                      onPressed:
+                          widget.state.syncing ? null : () => _fullSync(),
+                      icon: const Icon(Icons.cloud_download_outlined, size: 18),
+                      color: AppColors.muted,
+                      tooltip: '全量重新同步（补全历史，较慢）',
+                    ),
+                    IconButton(
                       onPressed: _loading ? null : () => _load(),
                       icon: const Icon(Icons.refresh, size: 18),
                       color: AppColors.muted,
@@ -189,6 +214,13 @@ class _HistoryPageState extends State<HistoryPage> {
                       icon: const Icon(Icons.download_outlined, size: 18),
                       color: AppColors.muted,
                       tooltip: '导出 CSV（在浏览器中下载）',
+                    ),
+                    IconButton(
+                      onPressed:
+                          widget.state.syncing ? null : () => _fullSync(),
+                      icon: const Icon(Icons.cloud_download_outlined, size: 18),
+                      color: AppColors.muted,
+                      tooltip: '全量重新同步（补全历史，较慢）',
                     ),
                     IconButton(
                       onPressed: _loading ? null : () => _load(),

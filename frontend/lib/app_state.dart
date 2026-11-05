@@ -35,6 +35,12 @@ class AppState extends ChangeNotifier {
   /// reload against the new server.
   int dataRevision = 0;
 
+  /// Bumped whenever the background prize check actually settled bets. The
+  /// ledger listens to this so it can reload itself. `dataRevision` is
+  /// deliberately not reused: bumping it would remount the analysis and
+  /// backtest pages too, throwing away results the user is looking at.
+  int betsRevision = 0;
+
   /// Suggested issue for a new bet, or null when unknown.
   String? apiNextIssue(String gameId) {
     for (final g in games) {
@@ -181,26 +187,48 @@ class AppState extends ChangeNotifier {
   }
 
   /// Asks the backend to settle pending bets. Called on app start, on
-  /// resume, and on a slow foreground timer, so a draw that landed while the
-  /// app was closed is checked without the user pressing anything. Failures
-  /// are ignored: the next sync retries and the ledger still renders.
+  /// resume, and on a foreground timer, so a draw that landed while the app
+  /// was closed is checked without the user pressing anything. When the
+  /// check settles something, [betsRevision] is bumped so the ledger
+  /// reloads — dropping the result used to leave the page showing 待开奖
+  /// until the next new issue happened to arrive. Failures are ignored: the
+  /// next sync retries and the ledger still renders.
   Future<void> checkBets() async {
     try {
-      await api.checkBets();
+      final result = await api.checkBets();
+      if (result.settled > 0) {
+        betsRevision++;
+        notifyListeners();
+      }
     } catch (_) {}
   }
 
-  Future<void> syncCurrent() async {
+  /// Pulls fresh data for the current game. [mode] is "recent" (only the
+  /// newest official page — what the toolbar button wants) or "full" (every
+  /// page plus the 2003–2012 backfill, the repair path).
+  Future<void> syncCurrent({String mode = 'recent'}) async {
     final g = game;
     if (g == null || syncing) return;
     syncing = true;
     toast = null;
     notifyListeners();
+    final before = g.latest?.issue;
     try {
-      final result = await api.sync(g.id);
-      final total = result['total'];
+      final result = await api.sync(g.id, mode: mode);
+      final latest = result['latest'];
+      final after =
+          latest is Map<String, dynamic> ? latest['issue'] as String? : null;
       final fetched = result['fetched'];
-      toast = '${g.name} 同步完成：拉取 $fetched 期，当前共 $total 期';
+      final total = result['total'];
+      // Say what actually happened: "已是最新" is the common answer right
+      // after a draw, and it used to be indistinguishable from a success.
+      if (after != null && after != before) {
+        toast = '${g.name} 已更新到第 $after 期'
+            '（拉取 $fetched 期，当前共 $total 期）';
+      } else {
+        toast = '${g.name} 已是最新：第 ${after ?? before ?? '—'} 期'
+            '（拉取 $fetched 期，当前共 $total 期）';
+      }
       // Remount the pages so history/analysis/backtest pick up the new draws.
       dataRevision++;
       await refreshGames();

@@ -22,6 +22,7 @@ pub struct AppState {
     pub db: Arc<Db>,
 }
 
+#[derive(Debug)]
 pub struct AppError {
     pub status: StatusCode,
     pub message: String,
@@ -627,8 +628,40 @@ async fn run_backtest(
 #[derive(Deserialize)]
 struct SyncRequest {
     game: String,
+    /// How much to fetch. `recent` (the default) reads only the newest
+    /// official page — cheap enough to run often, and what the toolbar button
+    /// wants when asking "did the draw land yet?". `official` walks every
+    /// official page; `full` adds the 500.com backfill for 2003–2012.
+    #[serde(default = "default_sync_mode")]
+    mode: String,
+    /// Deprecated alias for `mode: "full"`, honoured so a stale client keeps
+    /// its full re-sync instead of silently getting a recent-only one.
     #[serde(default)]
     full: Option<bool>,
+}
+
+fn default_sync_mode() -> String {
+    "recent".to_string()
+}
+
+/// What a sync request asks for.
+#[derive(Debug)]
+enum SyncScope {
+    Recent,
+    Official,
+    Full,
+}
+
+fn sync_scope(req: &SyncRequest) -> Result<SyncScope, AppError> {
+    match req.mode.trim().to_ascii_lowercase().as_str() {
+        "" | "recent" if req.full == Some(true) => Ok(SyncScope::Full),
+        "" | "recent" => Ok(SyncScope::Recent),
+        "official" => Ok(SyncScope::Official),
+        "full" => Ok(SyncScope::Full),
+        other => Err(AppError::bad(format!(
+            "未知的同步模式 {other}，可用：recent / official / full"
+        ))),
+    }
 }
 
 async fn sync(
@@ -636,8 +669,11 @@ async fn sync(
     Json(req): Json<SyncRequest>,
 ) -> Result<Json<Value>, AppError> {
     let g = game_or_err(&req.game)?;
-    let full = req.full.unwrap_or(true);
-    let draws = sources::sync(&req.game, full, g).await?;
+    let draws = match sync_scope(&req)? {
+        SyncScope::Recent => sources::fetch_recent(&req.game).await?,
+        SyncScope::Official => sources::sync(&req.game, false, g).await?,
+        SyncScope::Full => sources::sync(&req.game, true, g).await?,
+    };
     let fetched = draws.len();
     let written = state.db.upsert_many(&draws, "official")?;
     // A fresh draw settles the bets waiting on it.
@@ -731,4 +767,71 @@ fn is_unique(nums: &[u8]) -> bool {
     v.sort_unstable();
     v.dedup();
     v.len() == nums.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(mode: &str, full: Option<bool>) -> SyncRequest {
+        SyncRequest {
+            game: "ssq".to_string(),
+            mode: mode.to_string(),
+            full,
+        }
+    }
+
+    #[test]
+    fn recent_is_the_default_scope() {
+        assert!(matches!(
+            sync_scope(&req("", None)).unwrap(),
+            SyncScope::Recent
+        ));
+        assert!(matches!(
+            sync_scope(&req("recent", None)).unwrap(),
+            SyncScope::Recent
+        ));
+        // Case and stray whitespace don't matter.
+        assert!(matches!(
+            sync_scope(&req(" Recent ", None)).unwrap(),
+            SyncScope::Recent
+        ));
+    }
+
+    #[test]
+    fn official_and_full_are_selectable() {
+        assert!(matches!(
+            sync_scope(&req("official", None)).unwrap(),
+            SyncScope::Official
+        ));
+        assert!(matches!(
+            sync_scope(&req("full", None)).unwrap(),
+            SyncScope::Full
+        ));
+    }
+
+    #[test]
+    fn the_old_full_flag_still_means_a_full_sync() {
+        // A stale client that only knows the old flag keeps its full re-sync
+        // instead of silently getting a recent-only one.
+        assert!(matches!(
+            sync_scope(&req("", Some(true))).unwrap(),
+            SyncScope::Full
+        ));
+        assert!(matches!(
+            sync_scope(&req("recent", Some(true))).unwrap(),
+            SyncScope::Full
+        ));
+        assert!(matches!(
+            sync_scope(&req("recent", Some(false))).unwrap(),
+            SyncScope::Recent
+        ));
+    }
+
+    #[test]
+    fn an_unknown_mode_is_rejected() {
+        let err = sync_scope(&req("everything", None)).unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("recent"));
+    }
 }

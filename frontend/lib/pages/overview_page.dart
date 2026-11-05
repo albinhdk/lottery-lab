@@ -176,7 +176,8 @@ class _OverviewPageState extends State<OverviewPage> {
           ? const EmptyBox(
               icon: Icons.event_busy_outlined,
               title: '暂无数据',
-              subtitle: '点击右上角“同步数据”拉取历史开奖。',
+              subtitle: '启动时会自动同步历史开奖；若长时间没有数据，'
+                  '可点右上角“同步数据”手动检查，或到「历史开奖」页全量重新同步。',
             )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,

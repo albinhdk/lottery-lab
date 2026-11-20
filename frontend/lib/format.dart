@@ -45,3 +45,13 @@ String fmtIsoDate(DateTime d) {
   final day = d.day.toString().padLeft(2, '0');
   return '${d.year}-$m-$day';
 }
+
+const String _weekdayChars = '一二三四五六日';
+
+/// 「2026-11-01（周日）」；无法解析时原样返回。
+String fmtDateWithWeekday(String? iso) {
+  if (iso == null || iso.isEmpty) return '—';
+  final d = DateTime.tryParse(iso.length >= 10 ? iso.substring(0, 10) : iso);
+  if (d == null) return iso;
+  return '$iso（周${_weekdayChars[d.weekday % 7]}）';
+}

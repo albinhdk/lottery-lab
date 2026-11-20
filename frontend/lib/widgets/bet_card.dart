@@ -1,6 +1,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../draw_schedule.dart';
 import '../format.dart';
 import '../models.dart';
 import '../models_bet.dart';
@@ -27,12 +28,22 @@ class BetCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final won = bet.won;
     final pending = bet.pending;
+    final drawLabel = pending
+        ? issueDrawLabel(
+            bet.game,
+            bet.issue,
+            nextIssue: game.nextIssue,
+            // 最新一期的开奖日期是期号链的锚点：从它往后推一期，才不会被
+            // "刚过开奖时刻、数据还没同步"的 now 带偏。
+            lastDrawDate: game.latest?.date,
+          )
+        : null;
     return Panel(
       dense: true,
       tint: won ? AppColors.accent.withValues(alpha: 0.06) : null,
       title: '${bet.gameName} · 第 ${bet.issue} 期',
       subtitle: pending
-          ? '待开奖'
+          ? '待开奖 · 开奖时间：${drawLabel ?? '见官方公告'}'
           : '${bet.date} · 命中 ${game.primaryLabel} ${bet.primaryHits}/${game.primaryCount}'
               ' · ${game.secondaryLabel} ${bet.secondaryHits}/${game.secondaryCount}',
       trailing: _StatusChip(bet: bet),
@@ -40,17 +51,19 @@ class BetCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           BallRow(primary: bet.primary, secondary: bet.secondary, size: 30),
-          if (bet.multiple > 1 || bet.note.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                if (bet.multiple > 1) Tag('${bet.multiple} 倍', color: AppColors.blue),
-                if (bet.note.isNotEmpty) Tag(bet.note),
-              ],
-            ),
-          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              Tag(
+                bet.autoSelected ? '自动选号' : '手动选号',
+                color: bet.autoSelected ? AppColors.blue : AppColors.faint,
+              ),
+              if (bet.multiple > 1) Tag('${bet.multiple} 倍', color: AppColors.blue),
+              if (bet.note.isNotEmpty) Tag(bet.note),
+            ],
+          ),
           if (!pending) ...[
             const SizedBox(height: 12),
             _ResultRow(bet: bet, game: game, onActualAmount: onActualAmount),

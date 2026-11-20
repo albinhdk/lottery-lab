@@ -120,7 +120,9 @@ class _MyBetsPageState extends State<MyBetsPage> {
       // what made the button look broken.
       message = result.settled > 0
           ? '对奖完成：结算 ${result.settled} 注，中奖 ${result.won} 注'
-          : '没有需要结算的注（待开奖 ${result.stillPending} 注）';
+          : result.stillPending > 0
+              ? '这一期还没开奖，${result.stillPending} 注继续等待'
+              : '对奖完成：没有待开奖的记录';
     } catch (e) {
       // A failed check must not block the ledger: the next sync retries.
       message = '对奖失败：$e';
@@ -132,18 +134,8 @@ class _MyBetsPageState extends State<MyBetsPage> {
   }
 
   void _snack(String message) {
-    // Guarded: the page can be hosted without a Scaffold ancestor, and a
-    // failed toast must never break the re-check itself.
-    try {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message, style: const TextStyle(fontSize: 12)),
-          behavior: SnackBarBehavior.floating,
-          width: 300,
-          backgroundColor: AppColors.surfaceHi,
-        ),
-      );
-    } catch (_) {}
+    if (!mounted) return;
+    showAppSnack(context, message);
   }
 
   @override
@@ -267,7 +259,13 @@ class _MyBetsPageState extends State<MyBetsPage> {
   }
 
   Widget _filterRow() {
-    return Row(
+    // Wrap 而不是 Row：390px 窄屏上四个筛选项加「重新对奖」会超出屏幕，
+    // 放不下的按钮自动换到下一行，而不是被裁掉。
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         ChoicePills<String?>(
           values: const [null, 'pending', 'won', 'lost'],
@@ -286,7 +284,6 @@ class _MyBetsPageState extends State<MyBetsPage> {
             await _load();
           },
         ),
-        const Spacer(),
         TextButton.icon(
           onPressed: _checking ? null : () => _checkAndReload(full: true),
           icon: _checking
@@ -368,9 +365,7 @@ class _MyBetsPageState extends State<MyBetsPage> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('删除失败：$e', style: const TextStyle(fontSize: 12))),
-      );
+      showAppSnack(context, '删除失败：$e');
     }
   }
 
@@ -380,9 +375,7 @@ class _MyBetsPageState extends State<MyBetsPage> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存失败：$e', style: TextStyle(fontSize: 12))),
-      );
+      showAppSnack(context, '保存失败：$e');
     }
   }
 

@@ -12,6 +12,9 @@ class Bet {
   final List<int> secondary;
   final int multiple;
   final String note;
+  /// Where the numbers came from: `manual` (hand-picked) or `auto`
+  /// (generator strategy / random fill). Informational only.
+  final String source;
   final BetStatus status;
   final int tier;
   final String tierName;
@@ -42,6 +45,7 @@ class Bet {
     required this.secondary,
     required this.multiple,
     required this.note,
+    required this.source,
     required this.status,
     required this.tier,
     required this.tierName,
@@ -61,6 +65,9 @@ class Bet {
   bool get won => status == BetStatus.won;
   bool get pending => status == BetStatus.pending;
 
+  /// True when the ticket came from the generator or a random fill.
+  bool get autoSelected => source == 'auto';
+
   /// Amount actually counted in the ledger, honouring the user override.
   double get effectiveAmount => actualAmount ?? amount;
 
@@ -75,6 +82,7 @@ class Bet {
       secondary: _intList(json['secondary']),
       multiple: (json['multiple'] as num?)?.toInt() ?? 1,
       note: json['note'] as String? ?? '',
+      source: json['source'] as String? ?? 'manual',
       status: BetStatus.fromJson(json['status'] as String?),
       tier: (json['tier'] as num?)?.toInt() ?? 0,
       tierName: json['tier_name'] as String? ?? '未中奖',

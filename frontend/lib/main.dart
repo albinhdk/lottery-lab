@@ -125,7 +125,7 @@ class _Shell extends StatelessWidget {
   const _Shell({required this.state});
 
   static const _titles = [
-    ('数据概览', '历史覆盖、最新开奖与随机性体检'),
+    ('数据概览', '今日开奖、历史覆盖与随机性体检'),
     ('历史开奖', '完整开奖记录，按期号检索与分页浏览'),
     ('统计分析', '频率、遗漏、组合结构与严格的随机性检验'),
     ('策略回测', '严格走查：每一期只用此前数据，与随机基线对比'),
@@ -470,14 +470,7 @@ class _SyncButton extends StatelessWidget {
     if (!context.mounted) return;
     final message = state.toast;
     if (message != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message, style: const TextStyle(fontSize: 12)),
-          behavior: SnackBarBehavior.floating,
-          width: 300,
-          backgroundColor: AppColors.surfaceHi,
-        ),
-      );
+      showAppSnack(context, message);
     }
   }
 }

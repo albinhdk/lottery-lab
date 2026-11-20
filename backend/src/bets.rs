@@ -62,6 +62,9 @@ pub struct Bet {
     pub secondary: Vec<u8>,
     pub multiple: u32,
     pub note: String,
+    /// Where the numbers came from: `manual` (hand-picked) or `auto`
+    /// (generator strategy / random fill). Purely informational.
+    pub source: String,
     pub status: BetStatus,
     pub tier: u8,
     pub tier_name: String,
@@ -101,10 +104,25 @@ pub struct BetInput {
     pub multiple: u32,
     #[serde(default)]
     pub note: String,
+    /// `manual` or `auto`; unknown values fall back to `manual`.
+    #[serde(default = "default_source")]
+    pub source: String,
 }
 
 fn default_multiple() -> u32 {
     1
+}
+
+fn default_source() -> String {
+    "manual".to_string()
+}
+
+/// Coerces a client-supplied source into the two values we store.
+fn normalize_source(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto" => "auto",
+        _ => "manual",
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -172,7 +190,7 @@ pub struct BetStore {
 }
 
 const BET_COLUMNS: &str = "id, game, issue, draw_date, primary_numbers, secondary_numbers, \
-     multiple, note, status, tier, primary_hits, secondary_hits, matched_primary, \
+     multiple, note, source, status, tier, primary_hits, secondary_hits, matched_primary, \
      matched_secondary, amount, actual_amount, estimated, cost, created_at, checked_at";
 
 impl BetStore {
@@ -192,6 +210,7 @@ impl BetStore {
                 secondary_numbers TEXT NOT NULL,
                 multiple INTEGER NOT NULL DEFAULT 1,
                 note TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'manual',
                 status TEXT NOT NULL DEFAULT 'pending',
                 tier INTEGER NOT NULL DEFAULT 0,
                 primary_hits INTEGER NOT NULL DEFAULT 0,
@@ -210,6 +229,28 @@ impl BetStore {
              CREATE INDEX IF NOT EXISTS idx_bets_created ON bets(created_at);",
         )
         .context("create bets tables")?;
+        // Databases created before the source column existed need the ALTER:
+        // CREATE TABLE IF NOT EXISTS leaves them untouched. Old rows read as
+        // `manual` through the column default.
+        let has_source = {
+            let mut stmt = conn.prepare("PRAGMA table_info(bets)")?;
+            let mut rows = stmt.query([])?;
+            let mut found = false;
+            while let Some(row) = rows.next()? {
+                if row.get::<_, String>(1)? == "source" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !has_source {
+            conn.execute(
+                "ALTER TABLE bets ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
+                [],
+            )
+            .context("add bets.source column")?;
+        }
         Ok(())
     }
 
@@ -234,8 +275,8 @@ impl BetStore {
             )?;
             let mut stmt = tx.prepare(
                 "INSERT INTO bets
-                    (game, issue, primary_numbers, secondary_numbers, multiple, note, cost)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    (game, issue, primary_numbers, secondary_numbers, multiple, note, source, cost)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
             for input in inputs {
                 let primary = normalize(&input.primary);
@@ -261,6 +302,7 @@ impl BetStore {
                     key_secondary,
                     multiple,
                     input.note.trim(),
+                    normalize_source(&input.source),
                     price * multiple as f64,
                 ])?;
                 inserted += 1;
@@ -618,12 +660,12 @@ fn tier_amount(game: &GameDef, tier: u8) -> f64 {
 
 fn row_to_bet(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bet> {
     let game: String = row.get(1)?;
-    let tier: u8 = row.get(9)?;
-    let actual_amount: Option<f64> = row.get(15)?;
+    let tier: u8 = row.get(10)?;
+    let actual_amount: Option<f64> = row.get(16)?;
     let multiple: i64 = row.get(6)?;
-    let status = BetStatus::from_str(&row.get::<_, String>(8)?);
-    let amount: f64 = row.get(14)?;
-    let cost: f64 = row.get(17)?;
+    let status = BetStatus::from_str(&row.get::<_, String>(9)?);
+    let amount: f64 = row.get(15)?;
+    let cost: f64 = row.get(18)?;
     let effective = actual_amount.unwrap_or(amount);
     let game_name = config::game(&game)
         .map(|g| g.name.to_string())
@@ -638,24 +680,25 @@ fn row_to_bet(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bet> {
         secondary: parse_numbers(&row.get::<_, String>(5)?),
         multiple: multiple.max(0) as u32,
         note: row.get(7)?,
+        source: normalize_source(&row.get::<_, String>(8)?).to_string(),
         status,
         tier,
         tier_name: config::tier_name(&game, tier).to_string(),
-        primary_hits: row.get::<_, i64>(10)? as usize,
-        secondary_hits: row.get::<_, i64>(11)? as usize,
-        matched_primary: parse_numbers(&row.get::<_, String>(12)?),
-        matched_secondary: parse_numbers(&row.get::<_, String>(13)?),
+        primary_hits: row.get::<_, i64>(11)? as usize,
+        secondary_hits: row.get::<_, i64>(12)? as usize,
+        matched_primary: parse_numbers(&row.get::<_, String>(13)?),
+        matched_secondary: parse_numbers(&row.get::<_, String>(14)?),
         amount,
         actual_amount,
-        estimated: row.get::<_, i64>(16)? != 0,
+        estimated: row.get::<_, i64>(17)? != 0,
         cost,
         payout: if status == BetStatus::Won {
             effective * multiple.max(0) as f64
         } else {
             0.0
         },
-        created_at: row.get(18)?,
-        checked_at: row.get(19)?,
+        created_at: row.get(19)?,
+        checked_at: row.get(20)?,
     })
 }
 
@@ -709,6 +752,7 @@ mod tests {
             secondary,
             multiple: 1,
             note: String::new(),
+            source: "manual".into(),
         }
     }
 
@@ -766,6 +810,61 @@ mod tests {
             .unwrap();
         let row = store.get(1).unwrap().unwrap();
         assert_eq!(row.primary, vec![1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn source_is_stored_and_unknown_values_fall_back_to_manual() {
+        let store = store();
+        let mut auto = bet("2026001", vec![1, 2, 3, 4, 5, 6], vec![7]);
+        auto.source = "auto".into();
+        let mut bogus = bet("2026002", vec![1, 2, 3, 4, 5, 6], vec![7]);
+        bogus.source = "other".into();
+        store.insert("ssq", &[auto, bogus], 2.0).unwrap();
+        assert_eq!(store.get(1).unwrap().unwrap().source, "auto");
+        assert_eq!(store.get(2).unwrap().unwrap().source, "manual");
+    }
+
+    #[test]
+    fn schema_adds_source_to_an_existing_bets_table() {
+        // Regression: users upgrading from a build without the source column
+        // must keep their rows (read as manual) and still be able to save.
+        let conn = Arc::new(Mutex::new(Connection::open_in_memory().unwrap()));
+        conn.lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE bets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    game TEXT NOT NULL,
+                    issue TEXT NOT NULL,
+                    draw_date TEXT NOT NULL DEFAULT '',
+                    primary_numbers TEXT NOT NULL,
+                    secondary_numbers TEXT NOT NULL,
+                    multiple INTEGER NOT NULL DEFAULT 1,
+                    note TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    tier INTEGER NOT NULL DEFAULT 0,
+                    primary_hits INTEGER NOT NULL DEFAULT 0,
+                    secondary_hits INTEGER NOT NULL DEFAULT 0,
+                    matched_primary TEXT NOT NULL DEFAULT '',
+                    matched_secondary TEXT NOT NULL DEFAULT '',
+                    amount REAL NOT NULL DEFAULT 0,
+                    actual_amount REAL,
+                    estimated INTEGER NOT NULL DEFAULT 0,
+                    cost REAL NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    checked_at TEXT
+                 );
+                 INSERT INTO bets (game, issue, primary_numbers, secondary_numbers)
+                    VALUES ('ssq', '2026001', '1,2,3,4,5,6', '7');",
+            )
+            .unwrap();
+        let store = BetStore::new(conn);
+        store.ensure_schema().unwrap();
+        assert_eq!(store.get(1).unwrap().unwrap().source, "manual");
+        let mut auto = bet("2026002", vec![1, 2, 3, 4, 5, 6], vec![7]);
+        auto.source = "auto".into();
+        store.insert("ssq", &[auto], 2.0).unwrap();
+        assert_eq!(store.get(2).unwrap().unwrap().source, "auto");
     }
 
     #[test]
@@ -913,6 +1012,7 @@ mod tests {
                     secondary: vec![6, 7],
                     multiple: 1,
                     note: String::new(),
+                    source: "manual".into(),
                 }],
                 2.0,
             )
@@ -1000,6 +1100,7 @@ mod tests {
                     secondary: vec![6, 7],
                     multiple: 1,
                     note: String::new(),
+                    source: "manual".into(),
                 }],
                 2.0,
             )

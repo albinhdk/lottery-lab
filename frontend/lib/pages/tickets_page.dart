@@ -26,6 +26,15 @@ class _TicketsPageState extends State<TicketsPage> {
   String? _error;
   Map<String, dynamic>? _result;
 
+  /// Issue the generated tickets would be recorded against. Loaded from the
+  /// same recent-draws list the entry form uses, defaulting to the next one.
+  String? _issue;
+  String? _nextIssue;
+  List<String> _issues = const [];
+  bool _loadingIssues = true;
+  String? _issueError;
+  bool _savingToBets = false;
+
   /// 0 = strategy generator, 1 = hand-picked prize checker.
   int _mode = 0;
   bool _checkerOpened = false;
@@ -36,6 +45,38 @@ class _TicketsPageState extends State<TicketsPage> {
   void initState() {
     super.initState();
     _loadStrategies();
+    _loadIssues();
+  }
+
+  Future<void> _loadIssues() async {
+    final g = game;
+    if (g == null) {
+      if (mounted) setState(() => _loadingIssues = false);
+      return;
+    }
+    setState(() {
+      _loadingIssues = true;
+      _issueError = null;
+    });
+    try {
+      final page = await widget.state.api.draws(game: g.id, pageSize: 60);
+      final items = (page['items'] as List? ?? const [])
+          .map((e) => Draw.fromJson((e as Map).cast<String, dynamic>()))
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _issues = items.map((d) => d.issue).toList();
+        _nextIssue = widget.state.apiNextIssue(g.id);
+        _issue = _nextIssue ?? (_issues.isNotEmpty ? _issues.first : null);
+        _loadingIssues = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _issueError = e.toString();
+        _loadingIssues = false;
+      });
+    }
   }
 
   Future<void> _loadStrategies() async {
@@ -199,6 +240,38 @@ class _TicketsPageState extends State<TicketsPage> {
                 onChanged: (v) => setState(() => _count = v),
               ),
               const SizedBox(height: 18),
+              const SectionLabel('到期号', trailing: '添加记录时使用'),
+              const SizedBox(height: 8),
+              if (_loadingIssues)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.muted,
+                      ),
+                    ),
+                  ),
+                )
+              else if (_issueError != null)
+                TextButton.icon(
+                  onPressed: _loadIssues,
+                  icon: const Icon(Icons.refresh, size: 14),
+                  label: const Text('期号加载失败，点击重试',
+                      style: TextStyle(fontSize: 11)),
+                )
+              else if (_issues.isEmpty && _nextIssue == null)
+                const Text(
+                  '暂无期号数据，请先同步历史数据。',
+                  style: TextStyle(fontSize: 11, color: AppColors.faint),
+                )
+              else
+                _issueDropdown(),
+              const SizedBox(height: 18),
               SizedBox(
                 width: double.infinity,
                 child: PrimaryButton(
@@ -218,6 +291,41 @@ class _TicketsPageState extends State<TicketsPage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _issueDropdown() {
+    final items = <DropdownMenuItem<String>>[];
+    if (_nextIssue != null) {
+      items.add(DropdownMenuItem(
+        value: _nextIssue,
+        child: Text('第 $_nextIssue 期（下一期，未开奖）'),
+      ));
+    }
+    for (final issue in _issues) {
+      items.add(DropdownMenuItem(
+        value: issue,
+        child: Text('第 $issue 期（已开奖）'),
+      ));
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _issue,
+          isExpanded: true,
+          dropdownColor: AppColors.surfaceHi,
+          icon: const Icon(Icons.expand_more, size: 18, color: AppColors.muted),
+          style: const TextStyle(fontSize: 12.5, color: AppColors.text),
+          items: items,
+          onChanged: (value) => setState(() => _issue = value),
+        ),
+      ),
     );
   }
 
@@ -279,6 +387,22 @@ class _TicketsPageState extends State<TicketsPage> {
               );
             },
           ),
+          SizedBox(
+            width: double.infinity,
+            child: PrimaryButton(
+              label: _savingToBets
+                  ? '添加中…'
+                  : '把这 ${tickets.length} 注添加到我的记录',
+              icon: Icons.bookmark_add_outlined,
+              loading: _savingToBets,
+              onPressed: _issue == null ? null : () => _saveToBets(tickets, g),
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            '会以「自动选号」来源记到所选期号，可在「我的彩票」里核对。',
+            style: TextStyle(fontSize: 10.5, color: AppColors.faint, height: 1.6),
+          ),
           const SizedBox(height: 18),
           Container(
             padding: const EdgeInsets.all(14),
@@ -306,6 +430,58 @@ class _TicketsPageState extends State<TicketsPage> {
     );
   }
 
+  /// Saves every ticket of the current result against [_issue], tagged as an
+  /// automatic pick so the ledger can tell generated and hand-picked rows
+  /// apart.
+  Future<void> _saveToBets(
+    List<Map<String, dynamic>> tickets,
+    GameInfo g,
+  ) async {
+    final issue = _issue;
+    if (issue == null || issue.isEmpty) {
+      _snack('请先选择期号');
+      return;
+    }
+    if (_savingToBets) return;
+    setState(() => _savingToBets = true);
+    try {
+      final result = await widget.state.api.createBets(
+        game: g.id,
+        bets: [
+          for (final t in tickets)
+            {
+              'issue': issue,
+              'primary': (t['primary'] as List)
+                  .cast<num>()
+                  .map((e) => e.toInt())
+                  .toList(),
+              'secondary': (t['secondary'] as List)
+                  .cast<num>()
+                  .map((e) => e.toInt())
+                  .toList(),
+              'multiple': 1,
+              'note': '',
+              'source': 'auto',
+            },
+        ],
+      );
+      if (!mounted) return;
+      // The ledger is kept alive by LazyIndexedStack; tell it to reload.
+      widget.state.markBetsChanged();
+      final parts = <String>[
+        if (result.inserted > 0) '已添加 ${result.inserted} 注到第 $issue 期',
+        if (result.duplicates > 0) '跳过重复 ${result.duplicates} 注',
+        if (result.checked.won > 0) '其中中奖 ${result.checked.won} 注',
+      ];
+      _snack(parts.isEmpty ? '没有新增记录' : parts.join('，'));
+    } catch (e) {
+      if (!mounted) return;
+      _snack('添加失败：$e');
+    } finally {
+      if (mounted) setState(() => _savingToBets = false);
+    }
+  }
+
   String _formatTicket(Map<String, dynamic> t, GameInfo g) {
     final p = (t['primary'] as List).cast<num>().map((e) => e.toInt().toString().padLeft(2, '0')).join(' ');
     final s = (t['secondary'] as List).cast<num>().map((e) => e.toInt().toString().padLeft(2, '0')).join(' ');
@@ -328,15 +504,7 @@ class _TicketsPageState extends State<TicketsPage> {
   }
 
   void _snack(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(text, style: const TextStyle(fontSize: 12)),
-        behavior: SnackBarBehavior.floating,
-        width: 220,
-        backgroundColor: AppColors.surfaceHi,
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    showAppSnack(context, text);
   }
 }
 

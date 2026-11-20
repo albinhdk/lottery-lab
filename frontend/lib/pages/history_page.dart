@@ -111,13 +111,7 @@ class _HistoryPageState extends State<HistoryPage> {
       Uri.parse(widget.state.api.exportUrl(g.id)),
     );
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('无法打开导出链接', style: TextStyle(fontSize: 12)),
-          behavior: SnackBarBehavior.floating,
-          width: 240,
-        ),
-      );
+      showAppSnack(context, '无法打开导出链接');
     }
   }
 
@@ -129,14 +123,7 @@ class _HistoryPageState extends State<HistoryPage> {
     if (!mounted) return;
     final message = widget.state.toast;
     if (message == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: const TextStyle(fontSize: 12)),
-        behavior: SnackBarBehavior.floating,
-        width: 300,
-        backgroundColor: AppColors.surfaceHi,
-      ),
-    );
+    showAppSnack(context, message);
   }
 
   @override

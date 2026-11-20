@@ -113,6 +113,8 @@ class _BetEntryFormState extends State<BetEntryForm> {
     setState(() {
       draft.primary = _pick(g.primaryMax, g.primaryCount);
       draft.secondary = _pick(g.secondaryMax, g.secondaryCount);
+      // The numbers came from the RNG, not from the user's hand.
+      draft.auto = true;
     });
   }
 
@@ -134,6 +136,7 @@ class _BetEntryFormState extends State<BetEntryForm> {
           'secondary': draft.secondary,
           'multiple': draft.multiple,
           'note': draft.note,
+          'source': draft.auto ? 'auto' : 'manual',
         });
       }
     }
@@ -216,17 +219,7 @@ class _BetEntryFormState extends State<BetEntryForm> {
         if (result.duplicates > 0) '跳过重复 ${result.duplicates} 注',
         if (result.checked.won > 0) '其中中奖 ${result.checked.won} 注',
       ];
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            parts.isEmpty ? '没有新增记录' : parts.join('，'),
-            style: const TextStyle(fontSize: 12),
-          ),
-          behavior: SnackBarBehavior.floating,
-          width: 300,
-          backgroundColor: AppColors.surfaceHi,
-        ),
-      );
+      showAppSnack(context, parts.isEmpty ? '没有新增记录' : parts.join('，'));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -446,9 +439,17 @@ class _BetEntryFormState extends State<BetEntryForm> {
               secondaryLabel: g.secondaryLabel,
               multiple: _drafts[i].multiple,
               note: _drafts[i].note,
+              auto: _drafts[i].auto,
               canRemove: _drafts.length > 1,
-              onPrimaryChanged: (v) => setState(() => _drafts[i].primary = v),
-              onSecondaryChanged: (v) => setState(() => _drafts[i].secondary = v),
+              onPrimaryChanged: (v) => setState(() {
+                _drafts[i].primary = v;
+                // Editing by hand makes it a manual pick again.
+                _drafts[i].auto = false;
+              }),
+              onSecondaryChanged: (v) => setState(() {
+                _drafts[i].secondary = v;
+                _drafts[i].auto = false;
+              }),
               onMultipleChanged: (v) => setState(() => _drafts[i].multiple = v),
               onNoteChanged: (v) => setState(() => _drafts[i].note = v),
               onRemove: () => _removeDraft(i),
@@ -472,6 +473,10 @@ class _Draft {
   int multiple = 1;
   String note = '';
 
+  /// True when 随机 filled this draft; cleared as soon as the user taps a
+  /// ball. Persisted as the bet's `source`.
+  bool auto = false;
+
   _Draft.empty();
 
   void reset() {
@@ -479,5 +484,6 @@ class _Draft {
     secondary = [];
     multiple = 1;
     note = '';
+    auto = false;
   }
 }

@@ -106,6 +106,8 @@ class BetDraftCard extends StatelessWidget {
   final String secondaryLabel;
   final int multiple;
   final String note;
+  /// True when 随机 filled this draft.
+  final bool auto;
   final bool canRemove;
   final ValueChanged<List<int>> onPrimaryChanged;
   final ValueChanged<List<int>> onSecondaryChanged;
@@ -127,6 +129,7 @@ class BetDraftCard extends StatelessWidget {
     required this.secondaryLabel,
     required this.multiple,
     required this.note,
+    required this.auto,
     required this.canRemove,
     required this.onPrimaryChanged,
     required this.onSecondaryChanged,
@@ -142,7 +145,12 @@ class BetDraftCard extends StatelessWidget {
       dense: true,
       title: '第 $index 注',
       trailing: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
+          if (auto) ...[
+            const Tag('自动选号', color: AppColors.blue),
+            const SizedBox(width: 4),
+          ],
           TextButton.icon(
             onPressed: onRandom,
             icon: const Icon(Icons.casino_outlined, size: 15),
@@ -229,15 +237,7 @@ String formatBet(Bet bet, {String? primaryLabel, String? secondaryLabel}) {
 
 void copyBet(BuildContext context, Bet bet, {String? pl, String? sl}) {
   Clipboard.setData(ClipboardData(text: formatBet(bet, primaryLabel: pl, secondaryLabel: sl)));
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text('已复制', style: TextStyle(fontSize: 12)),
-      behavior: SnackBarBehavior.floating,
-      width: 200,
-      backgroundColor: AppColors.surfaceHi,
-      duration: Duration(seconds: 2),
-    ),
-  );
+  showAppSnack(context, '已复制');
 }
 
 class _PickBall extends StatelessWidget {

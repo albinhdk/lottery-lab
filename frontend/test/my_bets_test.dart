@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lottery_lab_app/api.dart';
 import 'package:lottery_lab_app/app_state.dart';
+import 'package:lottery_lab_app/draw_schedule.dart';
 import 'package:lottery_lab_app/models.dart';
 import 'package:lottery_lab_app/models_bet.dart';
 import 'package:lottery_lab_app/pages/my_bets_page.dart';
@@ -100,6 +101,7 @@ Map<String, dynamic> _betJson(Bet b) {
     'secondary': b.secondary,
     'multiple': b.multiple,
     'note': b.note,
+    'source': b.source,
     'status': b.status.name,
     'tier': b.tier,
     'tier_name': b.tierName,
@@ -131,6 +133,23 @@ const _game = GameInfo(
   count: 100,
 );
 
+/// Same game, but the backend already suggested the next issue, so a pending
+/// bet can be placed on the calendar.
+const _gameWithNextIssue = GameInfo(
+  id: 'ssq',
+  name: '双色球',
+  primaryLabel: '红球',
+  primaryCount: 6,
+  primaryMax: 33,
+  secondaryLabel: '蓝球',
+  secondaryCount: 1,
+  secondaryMax: 16,
+  price: 2,
+  prizeNote: '一、二等奖为浮动奖金。',
+  count: 100,
+  nextIssue: '2026126',
+);
+
 Bet _bet({
   required int id,
   required String issue,
@@ -139,6 +158,7 @@ Bet _bet({
   String tierName = '未中奖',
   double amount = 0,
   double payout = 0,
+  String source = 'manual',
 }) {
   return Bet(
     id: id,
@@ -150,6 +170,7 @@ Bet _bet({
     secondary: const [7],
     multiple: 1,
     note: '',
+    source: source,
     status: status,
     tier: tier,
     tierName: tierName,
@@ -212,6 +233,37 @@ void main() {
     // "待开奖" appears both in the status filter and on the card.
     expect(find.text('待开奖'), findsWidgets);
     expect(find.text('投入 2 元'), findsOneWidget);
+  });
+
+  testWidgets('pending record shows when the issue is drawn', (tester) async {
+    final api = _FakeApi()..stored = [_bet(id: 13, issue: '2026126')];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: MyBetsPage(state: _FakeState(api)..seed()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // 没有 nextIssue 时退回每周日程，而不是什么都不写。
+    expect(find.textContaining('开奖时间'), findsOneWidget);
+    expect(find.textContaining('每周二、四、日 21:15'), findsOneWidget);
+  });
+
+  testWidgets('pending record places the issue on its draw moment',
+      (tester) async {
+    final api = _FakeApi()..stored = [_bet(id: 14, issue: '2026126')];
+    final state = _FakeState(api)..seed();
+    state.games = const [_gameWithNextIssue];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: MyBetsPage(state: state),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final expected =
+        issueDrawLabel('ssq', '2026126', nextIssue: '2026126');
+    expect(find.textContaining('开奖时间：$expected'), findsOneWidget);
   });
 
   testWidgets('winning bet shows tier, amount and matched balls', (tester) async {
@@ -317,6 +369,24 @@ void main() {
     expect(find.text('双色球 · 第 2026125 期'), findsNothing);
   });
 
+  testWidgets('records show whether the numbers were picked by hand',
+      (tester) async {
+    final api = _FakeApi()
+      ..stored = [
+        _bet(id: 8, issue: '2026126'),
+        _bet(id: 9, issue: '2026125', source: 'auto'),
+      ];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: MyBetsPage(state: _FakeState(api)..seed()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('手动选号'), findsOneWidget);
+    expect(find.text('自动选号'), findsOneWidget);
+  });
+
   testWidgets('statistics tab breaks the ledger down by tier', (tester) async {
     final api = _FakeApi()
       ..stored = [
@@ -366,6 +436,7 @@ void main() {
           secondary: const [7, 10],
           multiple: 1,
           note: '',
+          source: 'manual',
           status: BetStatus.won,
           tier: 1,
           tierName: '一等奖',

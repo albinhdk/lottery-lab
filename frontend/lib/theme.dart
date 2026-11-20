@@ -7,8 +7,10 @@ class AppColors {
   static const surfaceHi = Color(0xFF202A3B);
   static const border = Color(0xFF243044);
   static const text = Color(0xFFE9EEF7);
-  static const muted = Color(0xFF8C9AB0);
-  static const faint = Color(0xFF5E6C82);
+  // muted / faint 是提示与次要文字，在深色底上必须保持 WCAG AA 对比度
+  // （对 bg/surface 均 ≥ 4.5:1），否则暗色主题下"看不清"。
+  static const muted = Color(0xFFA3B1C6);
+  static const faint = Color(0xFF8496AE);
   static const accent = Color(0xFFF2B84B);
   static const accentDeep = Color(0xFFE8942B);
   static const blue = Color(0xFF5B9CFF);
@@ -47,6 +49,25 @@ ThemeData buildTheme() {
         'Noto Sans CJK SC',
         'Segoe UI',
       ],
+    ),
+    // 提示条（SnackBar）的底色与文字色必须在主题里定：SnackBar 默认用
+    // ColorScheme.inverseSurface / onInverseSurface，而本主题只覆盖了少数
+    // 几个 colorScheme 字段，剩下的默认反色是"深色文字"——放在自定义的深色
+    // 底上就成了深色叠深色，几乎看不见。
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: AppColors.surfaceHi,
+      contentTextStyle: const TextStyle(
+        color: AppColors.text,
+        fontSize: 12.5,
+        height: 1.45,
+      ),
+      behavior: SnackBarBehavior.floating,
+      insetPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      elevation: 8,
     ),
     tooltipTheme: TooltipThemeData(
       decoration: BoxDecoration(

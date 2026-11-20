@@ -464,6 +464,34 @@ class SectionLabel extends StatelessWidget {
   }
 }
 
+/// 统一的应用内提示条。
+///
+/// 各处曾经各写一份 `SnackBar(backgroundColor: surfaceHi, content: Text(...))`，
+/// 但文字样式没一起给，于是沿着主题默认色走成了深色文字 + 深色底，几乎看不
+/// 见。这里集中收口：底色、文字色、圆角、浮动样式全部来自
+/// `theme.dart` 的 `snackBarTheme`，调用方只给文案。
+void showAppSnack(BuildContext context, String message) {
+  // 页面可以被嵌在没有 Scaffold 的宿主里（测试、以及日后可能的嵌入容器），
+  // 那种情况下 showSnackBar 内部会直接抛断言——断言发生在调用里层，事先检查
+  // messenger 拦不住，只能兜住。提示只是锦上添花，不能因为它让对奖、保存这些
+  // 真正的动作算作失败。
+  try {
+    if (!context.mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+  } catch (_) {
+    // 没有可用的 Scaffold：静默丢弃这条提示。
+  }
+}
+
 class PrimaryButton extends StatelessWidget {
   final String label;
   final IconData? icon;

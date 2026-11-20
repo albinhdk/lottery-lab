@@ -41,6 +41,12 @@ class AppState extends ChangeNotifier {
   /// backtest pages too, throwing away results the user is looking at.
   int betsRevision = 0;
 
+  /// Key of the last automatic "today's draw" fetch (game + Beijing date).
+  /// The overview page pulls the newest page once when it opens after the
+  /// draw time but the draw has not landed yet; the sync remounts the page,
+  /// so the key keeps that from looping back into another fetch.
+  String? autoDrawSyncKey;
+
   /// Suggested issue for a new bet, or null when unknown.
   String? apiNextIssue(String gameId) {
     for (final g in games) {
@@ -201,6 +207,13 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     } catch (_) {}
+  }
+
+  /// Tells the ledger that records were written elsewhere (the generator's
+  /// "add to my records" button), so it reloads on its next build.
+  void markBetsChanged() {
+    betsRevision++;
+    notifyListeners();
   }
 
   /// Pulls fresh data for the current game. [mode] is "recent" (only the

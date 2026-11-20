@@ -390,6 +390,7 @@ mod tests {
                     secondary: vec![7],
                     multiple: 1,
                     note: String::new(),
+                    source: "manual".into(),
                 }],
                 2.0,
             )

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../draw_schedule.dart';
 import '../format.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -9,7 +10,15 @@ import '../widgets/common.dart';
 class OverviewPage extends StatefulWidget {
   final AppState state;
 
-  const OverviewPage({super.key, required this.state});
+  /// 开奖日程使用的"现在"，默认取北京时间。测试注入固定时间即可确定性地
+  /// 覆盖"已开奖 / 未到开奖时间 / 已过开奖时间 / 今天不开奖"各分支。
+  final DateTime Function() clock;
+
+  const OverviewPage({
+    super.key,
+    required this.state,
+    this.clock = nowBeijing,
+  });
 
   @override
   State<OverviewPage> createState() => _OverviewPageState();
@@ -27,6 +36,24 @@ class _OverviewPageState extends State<OverviewPage> {
   void initState() {
     super.initState();
     _load();
+    _fetchTodaysDrawIfMissing();
+  }
+
+  /// 打开页面时若今天已过开奖时间、当日开奖却还没进库，就主动拉一次最新
+  /// 一页，让「今日开奖」立刻显示当天号码，而不是等后台轮询。每个彩种
+  /// 每个北京日期只尝试一次：同步成功后页面会重挂，key 防止再次触发。
+  void _fetchTodaysDrawIfMissing() {
+    final g = game;
+    if (g == null || widget.state.syncing) return;
+    final schedule = drawScheduleFor(g.id);
+    final latest = g.latest;
+    if (schedule == null || latest == null) return;
+    final now = widget.clock();
+    if (!shouldFetchTodaysDraw(schedule, latest.date, now)) return;
+    final key = '${g.id}-${fmtIsoDate(now)}';
+    if (widget.state.autoDrawSyncKey == key) return;
+    widget.state.autoDrawSyncKey = key;
+    widget.state.syncCurrent();
   }
 
   Future<void> _load() async {
@@ -75,35 +102,25 @@ class _OverviewPageState extends State<OverviewPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              _todayPanel(g, narrow: narrow),
+              const SizedBox(height: 18),
               _coverageRow(g),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
               if (narrow) ...[
-                _latestPanel(g, narrow: true),
-                const SizedBox(height: 16),
                 _randomnessPanel(),
                 const SizedBox(height: 16),
                 _heatPanel(g),
-                const SizedBox(height: 16),
-                _methodPanel(g),
-              ] else ...[
+              ] else
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(flex: 5, child: _latestPanel(g)),
-                    const SizedBox(width: 18),
                     Expanded(flex: 5, child: _randomnessPanel()),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(flex: 5, child: _heatPanel(g)),
                     const SizedBox(width: 18),
-                    Expanded(flex: 5, child: _methodPanel(g)),
+                    Expanded(flex: 5, child: _heatPanel(g)),
                   ],
                 ),
-              ],
+              const SizedBox(height: 18),
+              _methodPanel(g),
               const SizedBox(height: 18),
               _disclaimer(g),
             ],
@@ -161,16 +178,27 @@ class _OverviewPageState extends State<OverviewPage> {
     );
   }
 
-  Widget _latestPanel(GameInfo g, {bool narrow = false}) {
+  /// 顶部大卡片：当天开奖号码。已开奖就直接放大展示当天的球号；还没开奖
+  /// 就展示最近一期，并写清今天这一期什么时候开、会不会自动更新。
+  Widget _todayPanel(GameInfo g, {bool narrow = false}) {
     final latest = g.latest;
+    final schedule = drawScheduleFor(g.id);
+    final now = widget.clock();
+    final todayDrawn = latest != null && fmtIsoDate(now) == latest.date;
     return Panel(
-      title: '最新开奖',
+      title: todayDrawn ? '今日开奖' : '最新开奖',
       subtitle: '数据来自官方开奖接口',
-      trailing: IconButton(
-        onPressed: _load,
-        icon: const Icon(Icons.refresh, size: 18),
-        color: AppColors.muted,
-        tooltip: '刷新',
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (schedule != null) Tag(schedule.label, color: AppColors.blue),
+          IconButton(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh, size: 18),
+            color: AppColors.muted,
+            tooltip: '刷新',
+          ),
+        ],
       ),
       child: latest == null
           ? const EmptyBox(
@@ -194,7 +222,7 @@ class _OverviewPageState extends State<OverviewPage> {
                       ),
                       const Spacer(),
                       Text(
-                        latest.date,
+                        fmtDateWithWeekday(latest.date),
                         style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
                       ),
                     ],
@@ -212,11 +240,11 @@ class _OverviewPageState extends State<OverviewPage> {
                       BallRow(
                         primary: latest.primary,
                         secondary: latest.secondary,
-                        size: 40,
+                        size: 44,
                       ),
-                      const Spacer(),
+                      const SizedBox(width: 26),
                       Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             '第 ${latest.issue} 期',
@@ -227,7 +255,7 @@ class _OverviewPageState extends State<OverviewPage> {
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            latest.date,
+                            fmtDateWithWeekday(latest.date),
                             style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
                           ),
                         ],
@@ -248,8 +276,38 @@ class _OverviewPageState extends State<OverviewPage> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 14),
+                _drawStatusLine(g, now, todayDrawn),
               ],
             ),
+    );
+  }
+
+  /// 开奖状态行：当天是否已开奖、今天这一期几点开、下次开奖是什么时候。
+  Widget _drawStatusLine(GameInfo g, DateTime now, bool todayDrawn) {
+    final schedule = drawScheduleFor(g.id);
+    if (schedule == null) return const SizedBox.shrink();
+    final status = drawStatusFor(
+      schedule: schedule,
+      todayDrawn: todayDrawn,
+      now: now,
+      nextIssue: g.nextIssue,
+    );
+    return _statusRow(status.icon, status.color, status.text);
+  }
+
+  Widget _statusRow(IconData icon, Color color, String text) {
+    return Row(
+      children: [
+        Icon(icon, size: 15, color: color),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(fontSize: 11.5, color: color, height: 1.5),
+          ),
+        ),
+      ],
     );
   }
 

@@ -149,15 +149,7 @@ class _PrizeCheckPanelState extends State<PrizeCheckPanel> {
   }
 
   void _snack(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(text, style: const TextStyle(fontSize: 12)),
-        behavior: SnackBarBehavior.floating,
-        width: 280,
-        backgroundColor: AppColors.surfaceHi,
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    showAppSnack(context, text);
   }
 
   @override
